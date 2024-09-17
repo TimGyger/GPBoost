@@ -1801,6 +1801,452 @@ namespace GPBoost {
 		* \param y_data Response variable data if response variable is continuous
 		* \param y_data_int Response variable data if response variable is integer-valued
 		* \param fixed_effects Fixed effects component of location parameter
+		* \param sigma_ip Covariance matrix of inducing point process
+		* \param chol_fact_sigma_ip Cholesky factor of 'sigma_ip'
+		* \param chol_fact_sigma_woodbury Cholesky factor of 'sigma_ip + sigma_cross_cov_T * sigma_residual^-1 * sigma_cross_cov'
+		* \param cross_cov Cross-covariance matrix between inducing points and all data points
+		* \param sigma_woodbury Matrix 'sigma_ip + sigma_cross_cov_T * sigma_residual^-1 * sigma_cross_cov'
+		* \param B Matrix B in Vecchia approximation Sigma^-1 = B^T D^-1 B ("=" Cholesky factor)
+		* \param D_inv Diagonal matrix D^-1 in Vecchia approximation Sigma^-1 = B^T D^-1 B
+		* \param first_update If true, the covariance parameters or linear regression coefficients are updated for the first time and the max. number of iterations for the CG should be decreased
+		* \param Sigma_L_k Pivoted Cholseky decomposition of Sigma - Version Habrecht: matrix of dimension nxk with rank(Sigma_L_k_) <= piv_chol_rank generated in re_model_template.h
+		* \param calc_mll If true the marginal log-likelihood is also calculated (only relevant for matrix_inversion_method_ == "iterative")
+		* \param[out] approx_marginal_ll Approximate marginal log-likelihood evaluated at the mode
+		*/
+		void FindModePostRandEffCalcMLLFSAVecchia(const double* y_data,
+			const int* y_data_int,
+			const double* fixed_effects,
+			const std::shared_ptr<den_mat_t> sigma_ip,
+			const chol_den_mat_t& chol_fact_sigma_ip,
+			const chol_den_mat_t& chol_fact_sigma_woodbury,
+			const den_mat_t& chol_ip_cross_cov,
+			const std::shared_ptr<den_mat_t> cross_cov,
+			const den_mat_t& sigma_woodbury,
+			const sp_mat_t& B,
+			const sp_mat_t& D_inv,
+			const bool first_update,
+			bool calc_mll,
+			double& approx_marginal_ll) {
+			int num_ip = (int)((*sigma_ip).rows());
+			CHECK((int)((*cross_cov).rows()) == dim_mode_);
+			CHECK((int)((*cross_cov).cols()) == num_ip);
+			// Initialize variables
+			if (!mode_initialized_) {//Better (numerically more stable) to re-initialize mode to zero in every call
+				InitializeModeAvec();
+			}
+			else {
+				mode_previous_value_ = mode_;
+				na_or_inf_during_second_last_call_to_find_mode_ = na_or_inf_during_last_call_to_find_mode_;
+			}
+			vec_t location_par;//location parameter = mode of random effects + fixed effects
+			double* location_par_ptr;
+			vec_t rhs, B_mode, D_inv_B_mode, B_t_D_inv_B_mode, cross_cov_B_t_D_inv_B_mode, 
+				wood_inv_cross_cov_B_t_D_inv_B_mode, mode_new, mode_update(dim_mode_), mode_update_part(dim_mode_);
+			//Convert to row-major for parallelization
+			B_rm_ = sp_mat_rm_t(B);
+			D_inv_rm_ = sp_mat_rm_t(D_inv);
+			B_t_D_inv_rm_ = B_rm_.transpose() * D_inv_rm_;
+			// Variables when using Cholesky factorization
+			sp_mat_t SigmaI, SigmaI_plus_W;
+			vec_t mode_update_lag1;//auxiliary variable used only if quasi_newton_for_mode_finding_
+			den_mat_t woodbury_cross_cov_Bt_D_inv_B;
+			den_mat_t Bt_D_inv_B_cross_cov;
+			if (quasi_newton_for_mode_finding_ || (cg_preconditioner_type_ == "Bt_Sigma_inv_plus_W_B" && matrix_inversion_method_ == "iterative")) {
+				mode_update_lag1 = mode_;
+				Bt_D_inv_B_cross_cov.resize(dim_mode_,num_ip);
+#pragma omp parallel for schedule(static)  
+				for (int i = 0; i < num_ip; i++){
+					Bt_D_inv_B_cross_cov.col(i) = B_t_D_inv_rm_ * (B_rm_ * (*cross_cov).col(i));
+				}
+				if (quasi_newton_for_mode_finding_) {
+					TriangularSolveGivenCholesky<chol_den_mat_t, den_mat_t, den_mat_t, den_mat_t>(chol_fact_sigma_woodbury, Bt_D_inv_B_cross_cov.transpose(), woodbury_cross_cov_Bt_D_inv_B, false);
+				}
+			}
+			// Variables when using iterative methods
+			int cg_max_num_it = cg_max_num_it_;
+			int cg_max_num_it_tridiag = cg_max_num_it_tridiag_;
+			den_mat_t sigma_woodbury_woodbury;
+			chol_den_mat_t chol_fact_sigma_woodbury_woodbury;
+			InitializeLocationPar(fixed_effects, location_par, &location_par_ptr);
+			if (matrix_inversion_method_ != "iterative" || (cg_preconditioner_type_ == "Sigma_plus_W_inv_low_rank" && matrix_inversion_method_ == "iterative")) {
+				D_inv_B_rm_ = D_inv_rm_ * B_rm_;
+			}
+			// Initialize objective function (LA approx. marginal likelihood) for use as convergence criterion
+			B_mode = B_rm_ * mode_;
+			D_inv_B_mode = D_inv_rm_ * B_mode;
+			B_t_D_inv_B_mode = B_rm_.transpose() * D_inv_B_mode;
+			cross_cov_B_t_D_inv_B_mode = (*cross_cov).transpose() * B_t_D_inv_B_mode;
+			wood_inv_cross_cov_B_t_D_inv_B_mode = chol_fact_sigma_woodbury.solve(cross_cov_B_t_D_inv_B_mode);
+			approx_marginal_ll = -0.5 * ((B_mode.dot(D_inv_B_mode)) - cross_cov_B_t_D_inv_B_mode.dot(wood_inv_cross_cov_B_t_D_inv_B_mode)) + LogLikelihood(y_data, y_data_int, location_par_ptr, num_data_);
+			double approx_marginal_ll_new = approx_marginal_ll;
+			vec_t W_D_inv, W_D_inv_inv, W_D_inv_sqrt;
+			if (matrix_inversion_method_ == "iterative") {
+				//Reduce max. number of iterations for the CG in first update
+				if (first_update && reduce_cg_max_num_it_first_optim_step_) {
+					cg_max_num_it = (int)round(cg_max_num_it_ / 3);
+					cg_max_num_it_tridiag = (int)round(cg_max_num_it_tridiag_ / 3);
+				}
+			}
+			if (matrix_inversion_method_ != "iterative") {
+				SigmaI = B.transpose() * D_inv * B;
+			}
+			// Start finding mode 
+			int it;
+			bool terminate_optim = false;
+			bool has_NA_or_Inf = false;
+			double lr_GD = 1.;// learning rate for gradient descent
+			vec_t rhs_part, rhs_part1, rhs_part2, W_rhs, second_deriv_neg_ll_inv(dim_mode_);
+			den_mat_t sigma_woodbury_2;
+			chol_den_mat_t chol_fact_sigma_woodbury_2;
+			den_mat_t sigma_resid_plus_W_inv_cross_cov, sigma_resid_inv_sigma_resid_plus_W_inv_cross_cov(dim_mode_, num_ip);
+			den_mat_t vecchia_cross_cov(dim_mode_,num_ip), B_t_D_inv_W_D_inv_inv_D_inv_B_cross_cov(dim_mode_, num_ip);
+			D_inv_B_cross_cov_.resize(dim_mode_, num_ip);
+			Log::REInfo("start");//only for debugging
+			std::chrono::steady_clock::time_point begin, end;//only for debugging
+			double el_time;//only for debugging
+			begin = std::chrono::steady_clock::now();//only for debugging
+#pragma omp parallel for schedule(static)   
+			for (int i = 0; i < num_ip; ++i) {
+				D_inv_B_cross_cov_.col(i) = D_inv_rm_ * (B_rm_ * (*cross_cov).col(i));
+			}
+			if (matrix_inversion_method_ == "cholesky") {
+#pragma omp parallel for schedule(static)   
+				for (int i = 0; i < num_ip; ++i) {
+					vecchia_cross_cov.col(i) = B_rm_.transpose() * D_inv_B_cross_cov_.col(i);
+				}
+			}
+			end = std::chrono::steady_clock::now();//only for debugging
+			el_time = (double)(std::chrono::duration_cast<std::chrono::microseconds>(end - begin).count()) / 1000000.;//only for debugging
+			Log::REInfo(" time until = %g ", el_time);
+			den_mat_t chol_fact_SigmaI_plus_ZtWZ_vecchia_cross_cov;
+			vec_t diagonal_approx_preconditioner_vecchia(dim_mode_);
+			if (matrix_inversion_method_ == "iterative") {
+				if (cg_preconditioner_type_ == "Sigma_plus_W_inv_low_rank"){
+					sp_mat_rm_t D_diag_sqrt = sp_mat_rm_t(D_inv_rm_.diagonal().cwiseInverse().asDiagonal());
+					B_rm_inv_D_sqrt_ = sp_mat_rm_t(B_rm_.rows(), B_rm_.cols());
+					TriangularSolve<sp_mat_rm_t, sp_mat_rm_t, sp_mat_rm_t>(B_rm_, D_diag_sqrt, B_rm_inv_D_sqrt_, false);
+#pragma omp parallel for schedule(static)   
+					for (int i = 0; i < dim_mode_; ++i) {
+						diagonal_approx_preconditioner_vecchia[i] = B_rm_inv_D_sqrt_.row(i).dot(B_rm_inv_D_sqrt_.row(i));
+					}
+				}
+			}
+			for (it = 0; it < MAXIT_MODE_NEWTON_; ++it) {
+				// Calculate first and second derivative of log-likelihood
+				CalcFirstDerivLogLik(y_data, y_data_int, location_par_ptr);
+				CalcSecondDerivNegLogLik(y_data, y_data_int, location_par_ptr);
+				if (quasi_newton_for_mode_finding_) {
+					B_mode = B_rm_ * mode_;
+					D_inv_B_mode = D_inv_rm_ * B_mode;
+					B_t_D_inv_B_mode = B_rm_.transpose() * D_inv_B_mode;
+					wood_inv_cross_cov_B_t_D_inv_B_mode = chol_fact_sigma_woodbury.solve((*cross_cov).transpose() * B_t_D_inv_B_mode);
+					vec_t grad = first_deriv_ll_ - B_t_D_inv_B_mode + B_t_D_inv_rm_ * (B_rm_ * ((*cross_cov) * wood_inv_cross_cov_B_t_D_inv_B_mode));
+					if (cg_preconditioner_type_ == "Bt_Sigma_inv_plus_W_B") {
+						W_D_inv = (second_deriv_neg_ll_ + D_inv_rm_.diagonal());
+						W_D_inv_inv = W_D_inv.cwiseInverse();
+						W_D_inv_sqrt = W_D_inv_inv.cwiseSqrt();
+						B_t_D_inv_W_D_inv_inv_D_inv_B_cross_cov = W_D_inv_sqrt.asDiagonal() * D_inv_B_cross_cov_;
+						sigma_woodbury_woodbury = sigma_woodbury - B_t_D_inv_W_D_inv_inv_D_inv_B_cross_cov.transpose() * B_t_D_inv_W_D_inv_inv_D_inv_B_cross_cov;
+						chol_fact_sigma_woodbury_woodbury.compute(sigma_woodbury_woodbury);
+						vec_t grad_aux = W_D_inv_inv.cwiseProduct(B_rm_.transpose().triangularView<Eigen::UpLoType::UnitUpper>().solve(grad));
+						//grad_aux.array() /= (D_inv.diagonal().array() + second_deriv_neg_ll_.array());
+						grad = B_rm_.triangularView<Eigen::UpLoType::UnitLower>().solve(grad_aux + 
+							W_D_inv_inv.cwiseProduct(B_t_D_inv_rm_.transpose() * ((*cross_cov) * chol_fact_sigma_woodbury_woodbury.solve((*cross_cov).transpose() * (B_t_D_inv_rm_ * grad_aux)))));
+					}
+					else if (cg_preconditioner_type_ == "Sigma_plus_W_inv_low_rank") {
+						rhs_part1 = B_rm_.transpose().triangularView<Eigen::UpLoType::UnitUpper>().solve(grad);
+						rhs_part = D_inv_B_rm_.triangularView<Eigen::UpLoType::Lower>().solve(rhs_part1);
+						rhs_part2 = (*cross_cov) * (chol_fact_sigma_ip.solve((*cross_cov).transpose() * grad));
+						grad = rhs_part + rhs_part2;
+						second_deriv_neg_ll_inv.array() = second_deriv_neg_ll_.array().inverse();
+						diagonal_approx_preconditioner_.resize(dim_mode_);
+#pragma omp parallel for schedule(static)   
+						for (int i = 0; i < dim_mode_; ++i) {
+							diagonal_approx_preconditioner_[i] = diagonal_approx_preconditioner_vecchia[i] + second_deriv_neg_ll_inv[i];
+						}
+						diagonal_approx_inv_preconditioner_ = diagonal_approx_preconditioner_.cwiseInverse();
+						den_mat_t sigma_woodbury_preconditioner = (*cross_cov).transpose() * (diagonal_approx_inv_preconditioner_.asDiagonal() * (*cross_cov));
+						sigma_woodbury_preconditioner += (*sigma_ip);
+						chol_fact_woodbury_preconditioner_.compute(sigma_woodbury_preconditioner);
+						mode_update_part = diagonal_approx_inv_preconditioner_.asDiagonal() * grad;
+						grad = second_deriv_neg_ll_inv.asDiagonal() * (mode_update_part - 
+							diagonal_approx_inv_preconditioner_.asDiagonal() * ((*cross_cov) * chol_fact_woodbury_preconditioner_.solve((*cross_cov).transpose() * mode_update_part)));
+					}
+					else {
+						sp_mat_t D_inv_B = D_inv * B;
+						sp_mat_t Bt_D_inv_B_aux = B.cwiseProduct(D_inv_B);
+						vec_t SigmaI_diag = Bt_D_inv_B_aux.transpose() * vec_t::Ones(Bt_D_inv_B_aux.rows());
+#pragma omp parallel for schedule(static)   
+						for (int ii = 0; ii < woodbury_cross_cov_Bt_D_inv_B.cols(); ii++){
+							SigmaI_diag[ii] -= woodbury_cross_cov_Bt_D_inv_B.col(ii).array().square().sum();
+						}
+						grad.array() /= (second_deriv_neg_ll_.array() + SigmaI_diag.array());
+					}
+					// Backtracking line search
+					lr_GD = 1.;
+					double nesterov_acc_rate = (1. - (3. / (6. + it)));//Nesterov acceleration factor
+					for (int ih = 0; ih < MAX_NUMBER_LR_SHRINKAGE_STEPS_QUASI_NEWTON_; ++ih) {
+						mode_update = mode_ + lr_GD * grad;
+						REModelTemplate<T_mat, T_chol>::ApplyMomentumStep(it, mode_update, mode_update_lag1,
+							mode_new, nesterov_acc_rate, 0, false, 2, false);
+						CapChangeModeUpdateNewton(mode_new);
+						B_mode = B_rm_ * mode_new;
+						D_inv_B_mode = D_inv_rm_ * B_mode;
+						B_t_D_inv_B_mode = B_rm_.transpose() * D_inv_B_mode;
+						cross_cov_B_t_D_inv_B_mode = (*cross_cov).transpose() * B_t_D_inv_B_mode;
+						wood_inv_cross_cov_B_t_D_inv_B_mode = chol_fact_sigma_woodbury.solve(cross_cov_B_t_D_inv_B_mode);
+						UpdateLocationPar(mode_, fixed_effects, location_par, &location_par_ptr); // Update location parameter of log-likelihood for calculation of approx. marginal log-likelihood (objective function)
+						approx_marginal_ll_new = -0.5 * ((B_mode.dot(D_inv_B_mode)) - cross_cov_B_t_D_inv_B_mode.dot(wood_inv_cross_cov_B_t_D_inv_B_mode)) + LogLikelihood(y_data, y_data_int, location_par_ptr, num_data_);
+						if (approx_marginal_ll_new < approx_marginal_ll ||
+							std::isnan(approx_marginal_ll_new) || std::isinf(approx_marginal_ll_new)) {
+							lr_GD *= 0.5;
+							//nesterov_acc_rate *= 0.5;
+						}
+						else {//approx_marginal_ll_new >= approx_marginal_ll
+							break;
+						}
+					}// end loop over learnig rate halving procedure
+					mode_ = mode_new;
+					mode_update_lag1 = mode_update;
+				}//end quasi_newton_for_mode_finding_
+				else {//Newton's method
+					// Calculate Cholesky factor and update mode
+					rhs.array() = second_deriv_neg_ll_.array() * mode_.array() + first_deriv_ll_.array();//right hand side for updating mode
+					if (matrix_inversion_method_ == "iterative") {
+						//Reduce max. number of iterations for the CG in first update
+						if (cg_preconditioner_type_ == "Bt_Sigma_inv_plus_W_B" || cg_preconditioner_type_ == "none") {
+							begin = std::chrono::steady_clock::now();//only for debugging
+							W_D_inv = (second_deriv_neg_ll_ + D_inv_rm_.diagonal());
+							W_D_inv_inv = W_D_inv.cwiseInverse();
+							W_D_inv_sqrt = W_D_inv_inv.cwiseSqrt();
+							if (cg_preconditioner_type_ == "Bt_Sigma_inv_plus_W_B") {
+								B_t_D_inv_W_D_inv_inv_D_inv_B_cross_cov = W_D_inv_sqrt.asDiagonal() * D_inv_B_cross_cov_;
+								sigma_woodbury_woodbury = sigma_woodbury - B_t_D_inv_W_D_inv_inv_D_inv_B_cross_cov.transpose() * B_t_D_inv_W_D_inv_inv_D_inv_B_cross_cov;
+								chol_fact_sigma_woodbury_woodbury.compute(sigma_woodbury_woodbury);
+							}
+							end = std::chrono::steady_clock::now();//only for debugging
+							el_time = (double)(std::chrono::duration_cast<std::chrono::microseconds>(end - begin).count()) / 1000000.;//only for debugging
+							Log::REInfo("CG time until = %g ", el_time);
+							if ((second_deriv_neg_ll_.array() > 1e10).any()) {
+								has_NA_or_Inf = true;// the inversion of the preconditioner with the Woodbury identity can be numerically unstable when second_deriv_neg_ll_ is very large
+							}
+							else {
+								CGFSVALaplaceVec(second_deriv_neg_ll_, B_rm_, D_inv_rm_, B_t_D_inv_rm_, chol_fact_sigma_woodbury, cross_cov, W_D_inv_inv,
+									chol_fact_sigma_woodbury_woodbury, rhs, mode_update, has_NA_or_Inf, cg_max_num_it, it, cg_delta_conv_, ZERO_RHS_CG_THRESHOLD, cg_preconditioner_type_);
+							}
+						} 
+						else if (cg_preconditioner_type_ == "Sigma_plus_W_inv_low_rank") {
+							begin = std::chrono::steady_clock::now();//only for debugging
+							second_deriv_neg_ll_inv.array() = second_deriv_neg_ll_.array().inverse();
+							diagonal_approx_preconditioner_.resize(dim_mode_);
+#pragma omp parallel for schedule(static)   
+							for (int i = 0; i < dim_mode_; ++i) {
+								diagonal_approx_preconditioner_[i] = diagonal_approx_preconditioner_vecchia[i] + second_deriv_neg_ll_inv[i];
+							}
+							diagonal_approx_inv_preconditioner_ = diagonal_approx_preconditioner_.cwiseInverse();
+							den_mat_t sigma_woodbury_preconditioner = (*cross_cov).transpose() * (diagonal_approx_inv_preconditioner_.asDiagonal() * (*cross_cov));
+							sigma_woodbury_preconditioner += (*sigma_ip);
+							end = std::chrono::steady_clock::now();//only for debugging
+							el_time = (double)(std::chrono::duration_cast<std::chrono::microseconds>(end - begin).count()) / 1000000.;//only for debugging
+							Log::REInfo("wood time until = %g ", el_time);
+							chol_fact_woodbury_preconditioner_.compute(sigma_woodbury_preconditioner);
+							rhs_part1 = B_rm_.transpose().triangularView<Eigen::UpLoType::UnitUpper>().solve(rhs);
+							rhs_part = D_inv_B_rm_.triangularView<Eigen::UpLoType::Lower>().solve(rhs_part1);
+							rhs_part2 = (*cross_cov) * (chol_fact_sigma_ip.solve((*cross_cov).transpose() * rhs));
+							rhs = rhs_part + rhs_part2;
+							end = std::chrono::steady_clock::now();//only for debugging
+							el_time = (double)(std::chrono::duration_cast<std::chrono::microseconds>(end - begin).count()) / 1000000.;//only for debugging
+							Log::REInfo("CG time until = %g ", el_time);
+							CGFSVALowRankLaplaceVec(second_deriv_neg_ll_inv, D_inv_B_rm_, B_rm_, chol_fact_woodbury_preconditioner_,
+								chol_ip_cross_cov, cross_cov, diagonal_approx_inv_preconditioner_, rhs, mode_update_part, has_NA_or_Inf, 
+								cg_max_num_it, it, cg_delta_conv_, ZERO_RHS_CG_THRESHOLD, cg_preconditioner_type_);
+							mode_update = second_deriv_neg_ll_inv.asDiagonal() * mode_update_part;
+						}
+					}//end iterative
+					else { // start Cholesky 
+						second_deriv_neg_ll_inv.array() = second_deriv_neg_ll_.array().inverse();
+						rhs_part1 = B_rm_.transpose().triangularView<Eigen::UpLoType::UnitUpper>().solve(rhs);
+						rhs_part = D_inv_B_rm_.triangularView<Eigen::UpLoType::Lower>().solve(rhs_part1);
+						rhs_part2 = (*cross_cov) * (chol_fact_sigma_ip.solve((*cross_cov).transpose() * rhs));
+						rhs = rhs_part + rhs_part2;
+						SigmaI_plus_W = SigmaI;
+						SigmaI_plus_W.diagonal().array() += second_deriv_neg_ll_.array();
+						SigmaI_plus_W.makeCompressed();
+						W_rhs = second_deriv_neg_ll_.asDiagonal() * rhs;
+						//Calculation of the Cholesky factor is the bottleneck
+						if (!chol_fact_pattern_analyzed_) {
+							chol_fact_SigmaI_plus_ZtWZ_vecchia_.analyzePattern(SigmaI_plus_W);
+							chol_fact_pattern_analyzed_ = true;
+						}
+						chol_fact_SigmaI_plus_ZtWZ_vecchia_.factorize(SigmaI_plus_W);//This is the bottleneck for large data
+						sigma_resid_plus_W_inv_cross_cov = chol_fact_SigmaI_plus_ZtWZ_vecchia_.solve(second_deriv_neg_ll_.asDiagonal() * (*cross_cov));
+#pragma omp parallel for schedule(static)   
+						for (int i = 0; i < num_ip; ++i) {
+							sigma_resid_inv_sigma_resid_plus_W_inv_cross_cov.col(i) = B_t_D_inv_rm_ * (B_rm_ * sigma_resid_plus_W_inv_cross_cov.col(i));
+						}
+						sigma_woodbury_2 = (*sigma_ip) + (*cross_cov).transpose() * sigma_resid_inv_sigma_resid_plus_W_inv_cross_cov;
+						chol_fact_sigma_woodbury_2.compute(sigma_woodbury_2);
+						mode_update_part = B_t_D_inv_rm_ * (B_rm_ * chol_fact_SigmaI_plus_ZtWZ_vecchia_.solve(W_rhs));
+						mode_update = second_deriv_neg_ll_inv.asDiagonal() * (mode_update_part - sigma_resid_inv_sigma_resid_plus_W_inv_cross_cov * chol_fact_sigma_woodbury_2.solve((*cross_cov).transpose() * mode_update_part));
+					} // end Cholesky
+					Log::REInfo("mode %g", mode_update.mean());
+					// Backtracking line search
+					double lr_mode = 1.;
+					for (int ih = 0; ih < MAX_NUMBER_LR_SHRINKAGE_STEPS_NEWTON_; ++ih) {
+						if (ih == 0) {
+							mode_new = mode_update;
+						}
+						else {
+							mode_new = (1 - lr_mode) * mode_ + lr_mode * mode_update;
+						}
+						CapChangeModeUpdateNewton(mode_new);
+						UpdateLocationPar(mode_new, fixed_effects, location_par, &location_par_ptr); // Update location parameter of log-likelihood for calculation of approx. marginal log-likelihood (objective function)
+						B_mode = B_rm_ * mode_new;
+						D_inv_B_mode = D_inv_rm_ * B_mode;
+						B_t_D_inv_B_mode = B_rm_.transpose() * D_inv_B_mode;
+						cross_cov_B_t_D_inv_B_mode = (*cross_cov).transpose() * B_t_D_inv_B_mode;
+						wood_inv_cross_cov_B_t_D_inv_B_mode = chol_fact_sigma_woodbury.solve(cross_cov_B_t_D_inv_B_mode);
+						approx_marginal_ll_new = -0.5 * ((B_mode.dot(D_inv_B_mode)) - cross_cov_B_t_D_inv_B_mode.dot(wood_inv_cross_cov_B_t_D_inv_B_mode)) + LogLikelihood(y_data, y_data_int, location_par_ptr, num_data_);
+						if (approx_marginal_ll_new < approx_marginal_ll ||
+							std::isnan(approx_marginal_ll_new) || std::isinf(approx_marginal_ll_new)) {
+							lr_mode *= 0.5;
+						}
+						else {//approx_marginal_ll_new >= approx_marginal_ll
+							break;
+						}
+					}// end loop over learnig rate halving procedure
+					mode_ = mode_new;
+				}
+				CheckConvergenceModeFinding(it, approx_marginal_ll_new, approx_marginal_ll, terminate_optim, has_NA_or_Inf);
+				if (terminate_optim || has_NA_or_Inf) {
+					break;
+				}
+			} // end loop for mode finding
+			Log::REInfo("ll %g", approx_marginal_ll);
+			if (!has_NA_or_Inf) {//calculate determinant
+				mode_has_been_calculated_ = true;
+				mode_is_zero_ = false;
+				na_or_inf_during_last_call_to_find_mode_ = false;
+				CalcFirstDerivLogLik(y_data, y_data_int, location_par_ptr);//first derivative is not used here anymore but since it is reused in gradient calculation and in prediction, we calculate it once more
+				CalcSecondDerivNegLogLik(y_data, y_data_int, location_par_ptr);
+				if (matrix_inversion_method_ == "iterative") {
+					begin = std::chrono::steady_clock::now();//only for debugging
+					//Seed Generator
+					if (!cg_generator_seeded_) {
+						cg_generator_ = RNG_t(seed_rand_vec_trace_);
+						cg_generator_seeded_ = true;
+					}
+					if (calc_mll) {//calculate determinant term for approx_marginal_ll
+						//Generate random vectors (r_1, r_2, r_3, ...) with Cov(r_i) = I
+						if (!saved_rand_vec_trace_) {
+							rand_vec_trace_I2_.resize(dim_mode_, num_rand_vec_trace_);
+							rand_vec_trace_I_.resize(dim_mode_, num_rand_vec_trace_);
+							GenRandVecDiag(cg_generator_, rand_vec_trace_I2_);
+							SigmaI_plus_W_inv_Z_.resize(dim_mode_, num_rand_vec_trace_);
+							if (cg_preconditioner_type_ == "Bt_Sigma_inv_plus_W_B") {
+								rand_vec_trace_P_.resize(num_ip, num_rand_vec_trace_);
+								rand_vec_trace_I3_.resize(dim_mode_, num_rand_vec_trace_);
+								GenRandVecDiag(cg_generator_, rand_vec_trace_P_);
+								GenRandVecDiag(cg_generator_, rand_vec_trace_I3_);
+							}
+							else if (cg_preconditioner_type_ == "Sigma_plus_W_inv_low_rank") {
+								rand_vec_trace_P_.resize(num_ip, num_rand_vec_trace_);
+								GenRandVecDiag(cg_generator_, rand_vec_trace_P_);
+							}
+							if (reuse_rand_vec_trace_) {
+								saved_rand_vec_trace_ = true;
+							}
+						}
+						if (cg_preconditioner_type_ == "Bt_Sigma_inv_plus_W_B") {
+							// B^T * W^1/2 * rand_vec
+							den_mat_t Bt_W_sqrt_rand_vec_trace(dim_mode_, num_rand_vec_trace_);
+							vec_t second_deriv_neg_ll_sqrt = second_deriv_neg_ll_.cwiseSqrt();
+#pragma omp parallel for schedule(static)   
+							for (int i = 0; i < num_rand_vec_trace_; ++i) {
+								Bt_W_sqrt_rand_vec_trace.col(i) = B_rm_.transpose() * second_deriv_neg_ll_sqrt.cwiseProduct(rand_vec_trace_I2_.col(i));
+							}
+							// Sigma^1/2 * rand_vec
+							den_mat_t Sigma_sqrt_rand_vec = chol_ip_cross_cov.transpose() * rand_vec_trace_P_;
+							vec_t D_sqrt = D_inv_rm_.diagonal().cwiseInverse().cwiseSqrt();
+#pragma omp parallel for schedule(static)   
+							for (int i = 0; i < num_rand_vec_trace_; ++i) {
+								Sigma_sqrt_rand_vec.col(i) += B_rm_.triangularView<Eigen::UpLoType::UnitLower>().solve(D_sqrt.cwiseProduct(rand_vec_trace_I3_.col(i)));
+							}
+							// Sigma^-1 * Sigma^1/2 * rand_vec
+							den_mat_t Bt_D_inv_Sigma_sqrt_rand_vec(dim_mode_, num_rand_vec_trace_);
+#pragma omp parallel for schedule(static)   
+							for (int i = 0; i < num_rand_vec_trace_; ++i) {
+								Bt_D_inv_Sigma_sqrt_rand_vec.col(i) = B_t_D_inv_rm_ * B_rm_ * Sigma_sqrt_rand_vec.col(i);
+							}
+							
+							den_mat_t Sigma_inv_Sigma_sqrt_rand_vec = Bt_D_inv_Sigma_sqrt_rand_vec - Bt_D_inv_B_cross_cov * chol_fact_sigma_woodbury.solve((*cross_cov).transpose() * Bt_D_inv_Sigma_sqrt_rand_vec);
+							Bt_D_inv_Sigma_sqrt_rand_vec.resize(0, 0);
+							// P^1/2 * rand_vec
+							rand_vec_trace_I_ = Bt_W_sqrt_rand_vec_trace + Sigma_inv_Sigma_sqrt_rand_vec;
+							Bt_W_sqrt_rand_vec_trace.resize(0, 0);
+							Sigma_inv_Sigma_sqrt_rand_vec.resize(0, 0);
+						}
+						else if (cg_preconditioner_type_ == "Sigma_plus_W_inv_low_rank") {
+							rand_vec_trace_I_ = diagonal_approx_preconditioner_.cwiseSqrt().asDiagonal() * rand_vec_trace_I2_ + chol_ip_cross_cov.transpose() * rand_vec_trace_P_;
+						}
+						else {
+							rand_vec_trace_I_ = rand_vec_trace_I2_;
+						}
+						W_D_inv = (second_deriv_neg_ll_ + D_inv_rm_.diagonal());
+						W_D_inv_inv = W_D_inv.cwiseInverse();
+						W_D_inv_sqrt = W_D_inv_inv.cwiseSqrt();
+						if (cg_preconditioner_type_ == "Bt_Sigma_inv_plus_W_B") {
+							B_t_D_inv_W_D_inv_inv_D_inv_B_cross_cov = W_D_inv_sqrt.asDiagonal() * D_inv_B_cross_cov_;
+							sigma_woodbury_woodbury_ = sigma_woodbury - B_t_D_inv_W_D_inv_inv_D_inv_B_cross_cov.transpose() * B_t_D_inv_W_D_inv_inv_D_inv_B_cross_cov;
+							chol_fact_sigma_woodbury_woodbury_.compute(sigma_woodbury_woodbury_);
+						}
+						double log_det_Sigma_W_plus_I;
+						CalcLogDetStochFSVA(dim_mode_, cg_max_num_it_tridiag, chol_fact_sigma_woodbury, chol_ip_cross_cov, chol_fact_sigma_ip, cross_cov, W_D_inv_inv, chol_fact_sigma_woodbury_woodbury_, W_D_inv,
+							has_NA_or_Inf, log_det_Sigma_W_plus_I);
+						if (has_NA_or_Inf) {
+							approx_marginal_ll = std::numeric_limits<double>::quiet_NaN();
+							Log::REDebug(NA_OR_INF_WARNING_);
+							na_or_inf_during_last_call_to_find_mode_ = true;
+						}
+						else {
+							approx_marginal_ll -= 0.5 * log_det_Sigma_W_plus_I;
+						}
+					}//end calculate determinant term for approx_marginal_ll
+					end = std::chrono::steady_clock::now();//only for debugging
+					el_time = (double)(std::chrono::duration_cast<std::chrono::microseconds>(end - begin).count()) / 1000000.;//only for debugging
+					Log::REInfo(" time until CG rand vec = %g ", el_time);
+				}//end iterative
+				else {
+					SigmaI_plus_W = SigmaI;
+					SigmaI_plus_W.diagonal().array() += second_deriv_neg_ll_.array();
+					SigmaI_plus_W.makeCompressed();
+					if (!chol_fact_pattern_analyzed_) {
+						chol_fact_SigmaI_plus_ZtWZ_vecchia_.analyzePattern(SigmaI_plus_W);
+						chol_fact_pattern_analyzed_ = true;
+					}
+					chol_fact_SigmaI_plus_ZtWZ_vecchia_.factorize(SigmaI_plus_W);
+					TriangularSolveGivenCholesky<chol_sp_mat_t, sp_mat_t, den_mat_t, den_mat_t>(chol_fact_SigmaI_plus_ZtWZ_vecchia_,
+						vecchia_cross_cov, chol_fact_SigmaI_plus_ZtWZ_vecchia_cross_cov, false);
+					sigma_woodbury_woodbury_ = sigma_woodbury - chol_fact_SigmaI_plus_ZtWZ_vecchia_cross_cov.transpose() * chol_fact_SigmaI_plus_ZtWZ_vecchia_cross_cov;
+					chol_fact_sigma_woodbury_woodbury_.compute(sigma_woodbury_woodbury_);
+					approx_marginal_ll += -((sp_mat_t)chol_fact_SigmaI_plus_ZtWZ_vecchia_.matrixL()).diagonal().array().log().sum() + 0.5 * D_inv.diagonal().array().log().sum();
+					approx_marginal_ll += ((den_mat_t)chol_fact_sigma_ip.matrixL()).diagonal().array().log().sum();
+					approx_marginal_ll -= ((den_mat_t)chol_fact_sigma_woodbury_woodbury_.matrixL()).diagonal().array().log().sum();
+				}
+			}
+			Log::REInfo("NEGLL %g", approx_marginal_ll);
+			Log::REInfo("FindModePostRandEffCalcMLLFSAVecchia: finished after %d iterations ", it);//for debugging
+		}//end FindModePostRandEffCalcMLLFSAVecchia
+
+		/*!
+		* \brief Find the mode of the posterior of the latent random effects using Newton's method and calculate the approximative marginal log-likelihood.
+		*		Calculations are done by factorizing ("inverting) (Sigma^-1 + W) where it is assumed that an approximate Cholesky factor
+		*		of Sigma^-1 has previously been calculated using a Vecchia approximation.
+		*		This version is used for the Laplace approximation when there are only GP random effects and the Vecchia approximation is used.
+		*		Caveat: Sigma^-1 + W can be not very sparse
+		* \param y_data Response variable data if response variable is continuous
+		* \param y_data_int Response variable data if response variable is integer-valued
+		* \param fixed_effects Fixed effects component of location parameter
 		* \param B Matrix B in Vecchia approximation Sigma^-1 = B^T D^-1 B ("=" Cholesky factor)
 		* \param D_inv Diagonal matrix D^-1 in Vecchia approximation Sigma^-1 = B^T D^-1 B
 		* \param first_update If true, the covariance parameters or linear regression coefficients are updated for the first time and the max. number of iterations for the CG should be decreased
@@ -2044,7 +2490,8 @@ namespace GPBoost {
 					approx_marginal_ll += -((sp_mat_t)chol_fact_SigmaI_plus_ZtWZ_vecchia_.matrixL()).diagonal().array().log().sum() + 0.5 * D_inv.diagonal().array().log().sum();
 				}
 			}
-			//Log::REInfo("FindModePostRandEffCalcMLLVecchia: finished after %d iterations ", it);//for debugging
+			Log::REInfo("NEGLL %g", approx_marginal_ll);
+			Log::REInfo("FindModePostRandEffCalcMLLVecchia: finished after %d iterations ", it);//for debugging
 		}//end FindModePostRandEffCalcMLLVecchia
 
 		/*!
@@ -2584,6 +3031,812 @@ namespace GPBoost {
 		* \brief Calculate the gradient of the negative Laplace-approximated marginal log-likelihood wrt covariance parameters,
 		*		fixed effects (e.g., for linear regression coefficients), and additional likelihood-related parameters.
 		*		Calculations are done by factorizing ("inverting) (Sigma^-1 + W) where it is assumed that an approximate Cholesky factor
+		*		of Sigma^-1 has previously been calculated using a Full-scale-Vecchia approximation.
+		*		This version is used for the Laplace approximation when there are only GP random effects and the Vecchia approximation is used.
+		*		Caveat: Sigma^-1 + W can be not very sparse
+		* \param y_data Response variable data if response variable is continuous
+		* \param y_data_int Response variable data if response variable is integer-valued
+		* \param fixed_effects Fixed effects component of location parameter
+		* \param sigma_ip Covariance matrix of inducing point process
+		* \param chol_fact_sigma_ip Cholesky factor of 'sigma_ip'
+		* \param chol_fact_sigma_woodbury Cholesky factor of 'sigma_ip + sigma_cross_cov_T * sigma_residual^-1 * sigma_cross_cov'
+		* \param cross_cov Cross-covariance matrix between inducing points and all data points
+		* \param sigma_woodbury Matrix 'sigma_ip + sigma_cross_cov_T * sigma_residual^-1 * sigma_cross_cov'
+		* \param re_comps_ip_cluster_i
+		* \param re_comps_cross_cov_cluster_i
+		* \param B Matrix B in Vecchia approximation Sigma^-1 = B^T D^-1 B ("=" Cholesky factor)
+		* \param D_inv Diagonal matrix D^-1 in Vecchia approximation Sigma^-1 = B^T D^-1 B
+		* \param B_grad Derivatives of matrices B ( = derivative of matrix -A) for Vecchia approximation
+		* \param D_grad Derivatives of matrices D for Vecchia approximation
+		* \param calc_cov_grad If true, the gradient wrt the covariance parameters is calculated
+		* \param calc_F_grad If true, the gradient wrt the fixed effects mean function F is calculated
+		* \param calc_aux_par_grad If true, the gradient wrt additional likelihood parameters is calculated
+		* \param[out] cov_grad Gradient of approximate marginal log-likelihood wrt covariance parameters (needs to be preallocated of size num_cov_par)
+		* \param[out] fixed_effect_grad Gradient of approximate marginal log-likelihood wrt fixed effects F (note: this is passed as a Eigen vector in order to avoid the need for copying)
+		* \param[out] aux_par_grad Gradient wrt additional likelihood parameters
+		* \param calc_mode If true, the mode of the random effects posterior is calculated otherwise the values in mode and a_vec_ are used (default=false)
+		* \param num_comps_total Total number of random effect components ( = number of GPs)
+		* \param call_for_std_dev_coef If true, the function is called for calculating standard deviations of linear regression coefficients
+		*/
+		void CalcGradNegMargLikelihoodLaplaceApproxFSVA(const double* y_data,
+			const int* y_data_int,
+			const double* fixed_effects,
+			const std::shared_ptr<den_mat_t> sigma_ip,
+			const chol_den_mat_t& chol_fact_sigma_ip,
+			const chol_den_mat_t& chol_fact_sigma_woodbury,
+			const den_mat_t& chol_ip_cross_cov,
+			const std::shared_ptr<den_mat_t> cross_cov,
+			const den_mat_t& sigma_woodbury,
+			const std::vector<std::shared_ptr<RECompGP<den_mat_t>>>& re_comps_ip_cluster_i,
+			const std::vector<std::shared_ptr<RECompGP<den_mat_t>>>& re_comps_cross_cov_cluster_i,
+			const sp_mat_t& B,
+			const sp_mat_t& D_inv,
+			const std::vector<sp_mat_t>& B_grad,
+			const std::vector<sp_mat_t>& D_grad,
+			bool calc_cov_grad,
+			bool calc_F_grad,
+			bool calc_aux_par_grad,
+			double* cov_grad,
+			vec_t& fixed_effect_grad,
+			double* aux_par_grad,
+			bool calc_mode,
+			int num_comps_total,
+			bool call_for_std_dev_coef) {
+			int num_ip = (int)((*sigma_ip).rows());
+			CHECK((int)((*cross_cov).rows()) == dim_mode_);
+			CHECK((int)((*cross_cov).cols()) == num_ip);
+			if (calc_mode) {// Calculate mode and Cholesky factor 
+				double mll;//approximate marginal likelihood. This is a by-product that is not used here.
+				FindModePostRandEffCalcMLLFSAVecchia(y_data, y_data_int, fixed_effects, sigma_ip, chol_fact_sigma_ip, chol_fact_sigma_woodbury,
+					chol_ip_cross_cov, cross_cov, sigma_woodbury, B, D_inv, false, true, mll);
+			}
+			if (na_or_inf_during_last_call_to_find_mode_) {
+				if (call_for_std_dev_coef) {
+					Log::REFatal(CANNOT_CALC_STDEV_ERROR_);
+				}
+				else {
+					Log::REFatal(NA_OR_INF_ERROR_);
+				}
+			}
+			CHECK(mode_has_been_calculated_);
+			// Initialize variables
+			vec_t location_par;//location parameter = mode of random effects + fixed effects
+			double* location_par_ptr;
+			InitializeLocationPar(fixed_effects, location_par, &location_par_ptr);
+			vec_t third_deriv(dim_mode_);//vector of third derivatives of log-likelihood
+			vec_t third_deriv_data_scale;//third derivatives on the data-scale (only used if use_Z_for_duplicates_), the vector 'third_deriv' actually contains diag_ZtThirdDerivZ if use_Z_for_duplicates_
+			if (use_Z_for_duplicates_) {
+				third_deriv_data_scale = vec_t(num_data_);//third derivatives on the data-scale, the vector 'third_deriv' actually contains diag_ZtThirdDerivZ if use_Z_for_duplicates_
+				CalcThirdDerivLogLik(y_data, y_data_int, location_par_ptr, third_deriv_data_scale);
+				CalcZtVGivenIndices(num_data_, num_re_, random_effects_indices_of_data_, third_deriv_data_scale, third_deriv, true);
+			}
+			else {
+				CalcThirdDerivLogLik(y_data, y_data_int, location_par_ptr, third_deriv);
+			}
+			vec_t W_D_inv = second_deriv_neg_ll_ + D_inv_rm_.diagonal();
+			vec_t W_D_inv_inv = W_D_inv.cwiseInverse();
+			vec_t d_mll_d_mode;
+			den_mat_t Bt_D_inv_B_cross_cov(dim_mode_, num_ip);
+#pragma omp parallel for schedule(static)  
+			for (int ii = 0; ii < num_ip; ii++) {
+				Bt_D_inv_B_cross_cov.col(ii) = B_t_D_inv_rm_ * (B_rm_ * (*cross_cov).col(ii));
+			}
+			if (matrix_inversion_method_ == "iterative") {
+				double c_opt;
+				sp_mat_rm_t SigmaI_rm = B_t_D_inv_rm_ * B_rm_;
+				vec_t SigmaI_deriv_mode;
+				vec_t d_log_det_Sigma_W_plus_I_d_mode, SigmaI_plus_W_inv_d_mll_d_mode(dim_mode_);
+				den_mat_t W_deriv_rep;
+				vec_t tr_SigmaI_plus_W_inv_W_deriv, tr_PI_P_deriv_vec(dim_mode_), c_opt_vec;
+				den_mat_t Z_SigmaI_plus_W_inv_W_deriv_PI_Z, PI_Z(dim_mode_, num_rand_vec_trace_),
+					Z_PI_P_deriv_PI_Z;
+				if (cg_preconditioner_type_ == "Sigma_plus_W_inv_low_rank") {
+					vec_t W_inv_d_W = third_deriv.cwiseProduct(second_deriv_neg_ll_.cwiseInverse());
+					W_deriv_rep = (W_inv_d_W.cwiseProduct(second_deriv_neg_ll_.cwiseInverse())).replicate(1, num_rand_vec_trace_);
+					//W_deriv_rep *= -1.;
+					// P^-1 rand_vec
+					den_mat_t W_D_inv_inv_B_invt_rand_vec_trace_I(dim_mode_, num_rand_vec_trace_);
+					den_mat_t P_diag_inv_rand_vect = diagonal_approx_inv_preconditioner_.asDiagonal() * rand_vec_trace_I_;
+					PI_Z = P_diag_inv_rand_vect - diagonal_approx_inv_preconditioner_.asDiagonal() * (*cross_cov) * chol_fact_woodbury_preconditioner_.solve((*cross_cov).transpose() * P_diag_inv_rand_vect);
+					Z_SigmaI_plus_W_inv_W_deriv_PI_Z = (SigmaI_plus_W_inv_Z_.cwiseProduct(PI_Z)).cwiseProduct(W_deriv_rep);
+					tr_SigmaI_plus_W_inv_W_deriv = Z_SigmaI_plus_W_inv_W_deriv_PI_Z.rowwise().mean();
+					Z_PI_P_deriv_PI_Z = (PI_Z.cwiseProduct(PI_Z)).cwiseProduct(W_deriv_rep);
+					vec_t tr_PI_inv_W_deriv = Z_PI_P_deriv_PI_Z.rowwise().mean();
+					d_log_det_Sigma_W_plus_I_d_mode = tr_SigmaI_plus_W_inv_W_deriv - W_inv_d_W;// +?
+
+					den_mat_t Preconditioner_PP_inv;
+					TriangularSolveGivenCholesky<chol_den_mat_t, den_mat_t, den_mat_t, den_mat_t>(chol_fact_woodbury_preconditioner_, (diagonal_approx_inv_preconditioner_.asDiagonal() * (*cross_cov)).transpose(), Preconditioner_PP_inv, false);
+					tr_PI_P_deriv_vec = diagonal_approx_inv_preconditioner_.cwiseProduct(W_deriv_rep.col(0));
+#pragma omp parallel for schedule(static)   
+					for (int i = 0; i < dim_mode_; ++i) {
+						tr_PI_P_deriv_vec[i] -= Preconditioner_PP_inv.col(i).array().square().sum() * W_deriv_rep.col(0)[i];
+					}
+					//optimal c
+					Log::REInfo("mean1 %g", tr_PI_P_deriv_vec.mean());
+					Log::REInfo("mean1 %g", tr_PI_inv_W_deriv.mean());
+					Log::REInfo("mean1 %g", Z_SigmaI_plus_W_inv_W_deriv_PI_Z.mean());
+					CalcOptimalCVectorized(Z_SigmaI_plus_W_inv_W_deriv_PI_Z, Z_PI_P_deriv_PI_Z, tr_SigmaI_plus_W_inv_W_deriv, tr_PI_P_deriv_vec, c_opt_vec);
+					d_log_det_Sigma_W_plus_I_d_mode += c_opt_vec.cwiseProduct(tr_PI_P_deriv_vec - tr_PI_inv_W_deriv);
+					Log::REInfo("c_mean %g", c_opt_vec.mean());
+					Log::REInfo("c_max %g", c_opt_vec.maxCoeff());
+					Log::REInfo("c_min %g", c_opt_vec.minCoeff());
+					d_mll_d_mode = 0.5 * d_log_det_Sigma_W_plus_I_d_mode;
+					//For implicit derivatives: calculate (Sigma^(-1) + W)^(-1) d_mll_d_mode
+					bool has_NA_or_Inf = false;
+
+					vec_t Sigma_d_mll_d_mode = D_inv_B_rm_.triangularView<Eigen::UpLoType::Lower>().solve(B_rm_.transpose().triangularView<Eigen::UpLoType::UnitUpper>().solve(d_mll_d_mode)) + 
+						(*cross_cov) * (chol_fact_sigma_ip.solve((*cross_cov).transpose() * d_mll_d_mode));
+					vec_t W_SigmaI_plus_W_inv_d_mll_d_mode(dim_mode_);
+					CGFSVALowRankLaplaceVec(second_deriv_neg_ll_.cwiseInverse(), D_inv_B_rm_, B_rm_, chol_fact_woodbury_preconditioner_,
+						chol_ip_cross_cov, cross_cov, diagonal_approx_inv_preconditioner_, Sigma_d_mll_d_mode, W_SigmaI_plus_W_inv_d_mll_d_mode, has_NA_or_Inf,
+						cg_max_num_it_, 0, cg_delta_conv_, ZERO_RHS_CG_THRESHOLD, cg_preconditioner_type_);
+					SigmaI_plus_W_inv_d_mll_d_mode = second_deriv_neg_ll_.cwiseInverse().asDiagonal() * W_SigmaI_plus_W_inv_d_mll_d_mode;
+					if (has_NA_or_Inf) {
+						Log::REDebug(CG_NA_OR_INF_WARNING_);
+					}
+					// Calculate gradient wrt covariance parameters
+					if (calc_cov_grad) {
+						sp_mat_rm_t SigmaI_deriv_rm, Bt_Dinv_Bgrad_rm, B_t_D_inv_D_grad_D_inv_B_rm;
+						double explicit_derivative, d_log_det_Sigma_W_plus_I_d_cov_pars;
+						int num_par = (int)B_grad.size();
+						den_mat_t sigma_ip_cross_cov = chol_fact_sigma_ip.solve((*cross_cov).transpose());
+						sp_mat_rm_t B_inv(B_rm_.rows(), B_rm_.cols());
+						B_inv.setIdentity();
+						TriangularSolve<sp_mat_rm_t, sp_mat_rm_t, sp_mat_rm_t>(B_rm_, B_inv, B_inv, false);
+						for (int j = 0; j < (int)re_comps_ip_cluster_i.size(); ++j) {
+							for (int ipar = 0; ipar < re_comps_ip_cluster_i[j]->NumCovPar(); ++ipar) {
+								std::shared_ptr<den_mat_t> cross_cov_grad = re_comps_cross_cov_cluster_i[j]->GetZSigmaZtGrad(ipar, true, 0.);
+								den_mat_t sigma_ip_grad = *(re_comps_ip_cluster_i[j]->GetZSigmaZtGrad(ipar, true, 0.));
+								//if (num_comps_total == 1 && ipar == 0) {
+								//	SigmaI_deriv_rm = -B_rm_.transpose() * B_t_D_inv_rm_.transpose();//SigmaI_deriv = -SigmaI for variance parameters if there is only one GP
+								//}
+								//else {
+								SigmaI_deriv_rm = sp_mat_rm_t(B_grad[ipar].transpose()) * B_t_D_inv_rm_.transpose();
+								Bt_Dinv_Bgrad_rm = SigmaI_deriv_rm.transpose();
+								B_t_D_inv_D_grad_D_inv_B_rm = B_t_D_inv_rm_ * sp_mat_rm_t(D_grad[ipar]) * B_t_D_inv_rm_.transpose();
+								SigmaI_deriv_rm += Bt_Dinv_Bgrad_rm - B_t_D_inv_D_grad_D_inv_B_rm;
+								Bt_Dinv_Bgrad_rm.resize(0, 0);
+								//}
+								// Derivative of Woodbury matrix
+								den_mat_t sigma_woodbury_grad = sigma_ip_grad;
+								den_mat_t SigmaI_deriv_rm_cross_cov(dim_mode_, num_ip);
+#pragma omp parallel for schedule(static)  
+								for (int ii = 0; ii < num_ip; ii++) {
+									SigmaI_deriv_rm_cross_cov.col(ii) = SigmaI_deriv_rm * (*cross_cov).col(ii);
+								}
+								sigma_woodbury_grad += (*cross_cov).transpose() * SigmaI_deriv_rm_cross_cov;
+								den_mat_t cross_cov_Bt_D_inv_B_cross_cov_grad = Bt_D_inv_B_cross_cov.transpose() * (*cross_cov_grad);
+								sigma_woodbury_grad += cross_cov_Bt_D_inv_B_cross_cov_grad + cross_cov_Bt_D_inv_B_cross_cov_grad.transpose();
+
+								vec_t SigmaI_deriv_mode_part = SigmaI_deriv_rm * mode_;
+								vec_t SigmaI_mode = SigmaI_rm * mode_;
+								SigmaI_deriv_mode = SigmaI_deriv_mode_part - SigmaI_rm * ((*cross_cov) * chol_fact_sigma_woodbury.solve((*cross_cov).transpose() * SigmaI_deriv_mode_part)) -
+									SigmaI_deriv_rm * ((*cross_cov) * chol_fact_sigma_woodbury.solve((*cross_cov).transpose() * SigmaI_mode)) -
+									SigmaI_rm * ((*cross_cov_grad) * chol_fact_sigma_woodbury.solve((*cross_cov).transpose() * SigmaI_mode)) -
+									SigmaI_rm * ((*cross_cov) * chol_fact_sigma_woodbury.solve((*cross_cov_grad).transpose() * SigmaI_mode)) +
+									SigmaI_rm * ((*cross_cov) * chol_fact_sigma_woodbury.solve(sigma_woodbury_grad * chol_fact_sigma_woodbury.solve((*cross_cov).transpose() * SigmaI_mode)));
+								explicit_derivative = 0.5 * (mode_.dot(SigmaI_deriv_mode));
+								Log::REInfo("mode %g", (mode_.dot(SigmaI_deriv_mode)));
+								
+								den_mat_t cross_cov_PI_Z = (*cross_cov).transpose() * PI_Z;
+								den_mat_t PP_deriv_sample_vec = (*cross_cov_grad) * chol_fact_sigma_ip.solve(cross_cov_PI_Z) + (*cross_cov) * chol_fact_sigma_ip.solve((*cross_cov_grad).transpose() * PI_Z) -
+									(*cross_cov) * chol_fact_sigma_ip.solve(sigma_ip_grad * chol_fact_sigma_ip.solve(cross_cov_PI_Z));
+								vec_t D_grad_diagonal = D_grad[ipar].diagonal();
+								vec_t D_diagonal = D_inv_rm_.diagonal().cwiseInverse();
+								den_mat_t SigmaI_deriv_sample_vec = PP_deriv_sample_vec;
+#pragma omp parallel for schedule(static)  
+								for (int ii = 0; ii < num_rand_vec_trace_; ii++) {
+									SigmaI_deriv_sample_vec.col(ii) -= D_inv_B_rm_.triangularView<Eigen::UpLoType::Lower>().solve(B_rm_.transpose().triangularView<Eigen::UpLoType::UnitUpper>().solve(SigmaI_deriv_rm * D_inv_B_rm_.triangularView<Eigen::UpLoType::Lower>().solve(B_rm_.transpose().triangularView<Eigen::UpLoType::UnitUpper>().solve(PI_Z.col(ii)))));
+								}
+								vec_t sample_Sigma = (SigmaI_plus_W_inv_Z_.cwiseProduct(SigmaI_deriv_sample_vec)).colwise().sum();
+								double stoch_tr = sample_Sigma.mean();
+								d_log_det_Sigma_W_plus_I_d_cov_pars = stoch_tr;
+								den_mat_t P_grad_PI_Z = PP_deriv_sample_vec;
+								Log::REInfo("d_log_det_Sigma_W_plus_I_d_cov_pars %g", d_log_det_Sigma_W_plus_I_d_cov_pars);
+								vec_t diagonal_approx_preconditioner_grad_(dim_mode_); 
+								diagonal_approx_preconditioner_grad_.setZero();
+								sp_mat_rm_t B_rm_inv_D_grad = sp_mat_rm_t(B_rm_.rows(), B_rm_.cols());
+								sp_mat_rm_t D_grad_diag_sqrt = sp_mat_rm_t(D_grad_diagonal.cwiseSqrt().asDiagonal());
+								TriangularSolve<sp_mat_rm_t, sp_mat_rm_t, sp_mat_rm_t>(B_rm_, D_grad_diag_sqrt, B_rm_inv_D_grad, false);
+//#pragma omp parallel for schedule(static)   
+//								for (int ii = 0; ii < dim_mode_; ++ii) {
+//									diagonal_approx_preconditioner_grad_[ii] = B_rm_inv_D_grad.row(ii).dot(B_rm_inv_D_grad.row(ii)) - 
+//										2. * B_inv.row(ii).dot(B_grad[ipar] * (B_rm_inv_D_sqrt_ * B_rm_inv_D_sqrt_.row(ii).transpose()));
+//								}//TODO Tim
+								P_grad_PI_Z += diagonal_approx_preconditioner_grad_.asDiagonal() * PI_Z;
+
+								double tr_PI_P_grad = (diagonal_approx_preconditioner_grad_.array()* diagonal_approx_inv_preconditioner_.array()).sum();
+								Log::REInfo("Test1 %g", tr_PI_P_grad);
+								den_mat_t sigma_ip_cross_cov_grad = chol_fact_sigma_ip.solve((*cross_cov_grad).transpose());
+								den_mat_t sigma_ip_grad_sigma_ip_cross_cov = sigma_ip_grad * sigma_ip_cross_cov;
+								vec_t tr_PI_P_grad_vec(dim_mode_);
+#pragma omp parallel for schedule(static)  
+								for (int ii = 0; ii < dim_mode_; ii++) {
+									tr_PI_P_grad_vec[ii] = diagonal_approx_inv_preconditioner_[ii] * (2 * (sigma_ip_cross_cov_grad.col(ii).dot((*cross_cov).row(ii)))
+										- (sigma_ip_cross_cov.col(ii).array() * sigma_ip_grad_sigma_ip_cross_cov.col(ii).array()).sum()) -
+										diagonal_approx_preconditioner_grad_[ii] * Preconditioner_PP_inv.col(ii).array().square().sum();
+								}
+								tr_PI_P_grad += tr_PI_P_grad_vec.sum();
+								Log::REInfo("Test2 %g", tr_PI_P_grad);
+								den_mat_t Preconditioner_PP_inv_PP_grad = (Preconditioner_PP_inv * (*cross_cov)) * sigma_ip_cross_cov_grad + 
+									(Preconditioner_PP_inv * (*cross_cov_grad)) * sigma_ip_cross_cov -
+									(Preconditioner_PP_inv * sigma_ip_grad_sigma_ip_cross_cov.transpose()) * sigma_ip_cross_cov;
+#pragma omp parallel for schedule(static)  
+								for (int ii = 0; ii < dim_mode_; ii++) {
+									tr_PI_P_grad_vec[ii] = (Preconditioner_PP_inv.col(ii).array() * Preconditioner_PP_inv_PP_grad.col(ii).array()).sum();
+								}
+								tr_PI_P_grad -= tr_PI_P_grad_vec.sum();
+								Log::REInfo("Test %g", stoch_tr);
+								Log::REInfo("Test %g", tr_PI_P_grad);
+								vec_t sample_P = (PI_Z.cwiseProduct(P_grad_PI_Z)).colwise().sum();
+								CalcOptimalC(sample_Sigma, sample_P, stoch_tr, tr_PI_P_grad, c_opt);
+								d_log_det_Sigma_W_plus_I_d_cov_pars -= c_opt * (sample_P.mean() - tr_PI_P_grad);
+								Log::REInfo("Test %g", sample_P.mean());
+								Log::REInfo("Test %g", c_opt);
+								
+								Log::REInfo("tr final %g", d_log_det_Sigma_W_plus_I_d_cov_pars);
+								explicit_derivative += 0.5 * d_log_det_Sigma_W_plus_I_d_cov_pars;
+								Log::REInfo("explicit_derivative %g", explicit_derivative);
+								cov_grad[ipar] = explicit_derivative - SigmaI_plus_W_inv_d_mll_d_mode.dot(SigmaI_deriv_mode);
+								Log::REInfo("SigmaI_plus_W_inv_d_mll_d_mode %g", SigmaI_plus_W_inv_d_mll_d_mode.dot(SigmaI_deriv_mode));
+							}
+						}
+					}
+					//Calculate gradient wrt fixed effects
+					vec_t SigmaI_plus_W_inv_diag;
+					if (use_Z_for_duplicates_ && (calc_F_grad || calc_aux_par_grad)) {
+						//Stochastic Trace: Calculate diagonal of SigmaI_plus_W_inv for gradient of approx. marginal likelihood wrt. F
+						SigmaI_plus_W_inv_diag = d_log_det_Sigma_W_plus_I_d_mode;
+						SigmaI_plus_W_inv_diag.array() *= -1. / third_deriv.array();
+					}
+					if (calc_F_grad) {
+						if (use_Z_for_duplicates_) {
+							fixed_effect_grad = -first_deriv_ll_data_scale_;
+#pragma omp parallel for schedule(static)
+							for (data_size_t i = 0; i < num_data_; ++i) {
+								fixed_effect_grad[i] += -0.5 * third_deriv_data_scale[i] * SigmaI_plus_W_inv_diag[random_effects_indices_of_data_[i]] -
+									second_deriv_neg_ll_data_scale_[i] * SigmaI_plus_W_inv_d_mll_d_mode[random_effects_indices_of_data_[i]];// implicit derivative
+							}
+						}
+						else {
+							vec_t d_mll_d_F_implicit = -(SigmaI_plus_W_inv_d_mll_d_mode.array() * second_deriv_neg_ll_.array()).matrix();// implicit derivative
+							fixed_effect_grad = -first_deriv_ll_ + d_mll_d_mode + d_mll_d_F_implicit;
+						}
+					}
+					//Calculate gradient wrt additional likelihood parameters
+					if (calc_aux_par_grad) {
+						vec_t neg_likelihood_deriv(num_aux_pars_);//derivative of the negative log-likelihood wrt additional parameters of the likelihood
+						vec_t second_deriv(num_data_);//second derivative of the log-likelihood with respect to (i) the location parameter and (ii) an additional parameter of the likelihood
+						vec_t neg_third_deriv(num_data_);//negative third derivative of the log-likelihood with respect to (i) two times the location parameter and (ii) an additional parameter of the likelihood
+						vec_t d_mode_d_aux_par;
+						CalcGradNegLogLikAuxPars(y_data, y_data_int, location_par_ptr, num_data_, neg_likelihood_deriv.data());
+						for (int ind_ap = 0; ind_ap < num_aux_pars_; ++ind_ap) {
+							CalcSecondNegThirdDerivLogLikAuxParsLocPar(y_data, y_data_int, location_par_ptr, num_data_, ind_ap, second_deriv.data(), neg_third_deriv.data());
+							double d_detmll_d_aux_par = 0., implicit_derivative = 0.;
+							if (use_Z_for_duplicates_) {
+#pragma omp parallel for schedule(static) reduction(+:d_detmll_d_aux_par, implicit_derivative)
+								for (data_size_t i = 0; i < num_data_; ++i) {
+									d_detmll_d_aux_par += neg_third_deriv[i] * SigmaI_plus_W_inv_diag[random_effects_indices_of_data_[i]];
+									implicit_derivative += second_deriv[i] * SigmaI_plus_W_inv_d_mll_d_mode[random_effects_indices_of_data_[i]];
+								}
+							}
+							else {
+								//Stochastic Trace: Calculate tr((Sigma^(-1) + W)^(-1) dW/daux)
+								vec_t zt_SigmaI_plus_W_inv_W_deriv_PI_z = ((SigmaI_plus_W_inv_Z_.cwiseProduct(neg_third_deriv.asDiagonal() * PI_Z)).colwise().sum()).transpose();
+								double tr_SigmaI_plus_W_inv_W_deriv_d = zt_SigmaI_plus_W_inv_W_deriv_PI_z.mean();
+								d_detmll_d_aux_par = tr_SigmaI_plus_W_inv_W_deriv_d;
+								//variance reduction
+								//stochastic tr(P^(-1) dP/daux), where dP/daux = B^T dW/daux B
+								vec_t W_inv_d_W_W_inv = neg_third_deriv.cwiseProduct((second_deriv_neg_ll_.cwiseInverse().cwiseProduct(second_deriv_neg_ll_.cwiseInverse())));
+								double tr_D_inv_plus_W_inv_W_deriv = (diagonal_approx_inv_preconditioner_.array() * W_inv_d_W_W_inv.array()).sum();
+								for (int ii = 0; ii < dim_mode_; ii++) {
+									tr_D_inv_plus_W_inv_W_deriv -= Preconditioner_PP_inv.col(ii).array().square().sum() * W_inv_d_W_W_inv[ii];
+								}
+								vec_t zt_PI_P_deriv_PI_z = ((PI_Z.cwiseProduct(-1. * W_inv_d_W_W_inv.asDiagonal() * PI_Z)).colwise().sum()).transpose();
+								double tr_PI_P_deriv = zt_PI_P_deriv_PI_z.mean();
+								//optimal 
+								CalcOptimalC(zt_SigmaI_plus_W_inv_W_deriv_PI_z, zt_PI_P_deriv_PI_z, tr_SigmaI_plus_W_inv_W_deriv_d, tr_D_inv_plus_W_inv_W_deriv, c_opt);
+								d_detmll_d_aux_par -= c_opt * (tr_PI_P_deriv - tr_D_inv_plus_W_inv_W_deriv);
+								d_detmll_d_aux_par -= (neg_third_deriv.array() * second_deriv_neg_ll_.cwiseInverse().array()).sum();
+#pragma omp parallel for schedule(static) reduction(+:d_detmll_d_aux_par, implicit_derivative)
+								for (data_size_t i = 0; i < num_data_; ++i) {
+									implicit_derivative += second_deriv[i] * SigmaI_plus_W_inv_d_mll_d_mode[i];
+								}
+							}
+							aux_par_grad[ind_ap] = neg_likelihood_deriv[ind_ap] + 0.5 * d_detmll_d_aux_par + implicit_derivative;
+						}
+					}//end calc_aux_par_grad
+				} 
+				else {
+					W_deriv_rep = third_deriv.replicate(1, num_rand_vec_trace_);
+					W_deriv_rep *= -1.;
+					if (cg_preconditioner_type_ == "Bt_Sigma_inv_plus_W_B") {
+						// P^-1 rand_vec
+						den_mat_t W_D_inv_inv_B_invt_rand_vec_trace_I(dim_mode_, num_rand_vec_trace_);
+#pragma omp parallel for schedule(static)   
+						for (int i = 0; i < num_rand_vec_trace_; ++i) {
+							W_D_inv_inv_B_invt_rand_vec_trace_I.col(i) = W_D_inv_inv.cwiseProduct(B_rm_.transpose().triangularView<Eigen::UpLoType::UnitUpper>().solve(rand_vec_trace_I_.col(i)));
+						}
+						den_mat_t B_t_D_inv_W_D_inv_inv_B_invt_rand_vec_trace_I(dim_mode_, num_rand_vec_trace_);
+#pragma omp parallel for schedule(static)   
+						for (int i = 0; i < num_rand_vec_trace_; ++i) {
+							B_t_D_inv_W_D_inv_inv_B_invt_rand_vec_trace_I.col(i) = B_t_D_inv_rm_ * W_D_inv_inv_B_invt_rand_vec_trace_I.col(i);
+						}
+						den_mat_t cross_cov_sigma_woodbury_woodbury_cross_cov_B_t_D_inv_W_D_inv_inv_B_invt_rand_vec_trace_I = (*cross_cov) * (chol_fact_sigma_woodbury_woodbury_.solve((*cross_cov).transpose() * B_t_D_inv_W_D_inv_inv_B_invt_rand_vec_trace_I));
+						den_mat_t vecchia_cross_cov_sigma_woodbury_woodbury_inv_cross_cov_vecchia(dim_mode_, num_rand_vec_trace_);
+#pragma omp parallel for schedule(static)   
+						for (int i = 0; i < num_rand_vec_trace_; ++i) {
+							vecchia_cross_cov_sigma_woodbury_woodbury_inv_cross_cov_vecchia.col(i) = W_D_inv_inv.cwiseProduct(B_t_D_inv_rm_.transpose() * cross_cov_sigma_woodbury_woodbury_cross_cov_B_t_D_inv_W_D_inv_inv_B_invt_rand_vec_trace_I.col(i));
+						}
+						den_mat_t W_D_inv_inv_plus_vecchia_woodbury_woodbury_B_invt_rand_vec_trace_I = W_D_inv_inv_B_invt_rand_vec_trace_I + vecchia_cross_cov_sigma_woodbury_woodbury_inv_cross_cov_vecchia;
+#pragma omp parallel for schedule(static)   
+						for (int i = 0; i < num_rand_vec_trace_; ++i) {
+							PI_Z.col(i) = B_rm_.triangularView<Eigen::UpLoType::UnitLower>().solve(W_D_inv_inv_plus_vecchia_woodbury_woodbury_B_invt_rand_vec_trace_I.col(i));
+						}
+
+						Z_SigmaI_plus_W_inv_W_deriv_PI_Z = (SigmaI_plus_W_inv_Z_.cwiseProduct(PI_Z)).cwiseProduct(W_deriv_rep);
+						tr_SigmaI_plus_W_inv_W_deriv = Z_SigmaI_plus_W_inv_W_deriv_PI_Z.rowwise().mean();
+
+						den_mat_t B_PI_Z(dim_mode_, num_rand_vec_trace_);
+#pragma omp parallel for schedule(static)   
+						for (int i = 0; i < num_rand_vec_trace_; ++i) {
+							B_PI_Z.col(i) = B_rm_ * PI_Z.col(i);
+						}
+						Z_PI_P_deriv_PI_Z = (B_PI_Z.cwiseProduct(B_PI_Z)).cwiseProduct(W_deriv_rep);
+						vec_t tr_PI_inv_W_deriv = Z_PI_P_deriv_PI_Z.rowwise().mean();
+						d_log_det_Sigma_W_plus_I_d_mode = tr_SigmaI_plus_W_inv_W_deriv;
+
+						tr_PI_P_deriv_vec = W_D_inv_inv.cwiseProduct(-1. * third_deriv);
+						den_mat_t chol_fact_sigma_woodbury_woodbury_D_inv_B_cross_cov;
+						TriangularSolveGivenCholesky<chol_den_mat_t, den_mat_t, den_mat_t, den_mat_t>(chol_fact_sigma_woodbury_woodbury_,
+							D_inv_B_cross_cov_.transpose() * W_D_inv_inv.asDiagonal(), chol_fact_sigma_woodbury_woodbury_D_inv_B_cross_cov, false);
+#pragma omp parallel for schedule(static)   
+						for (int i = 0; i < dim_mode_; ++i) {
+							tr_PI_P_deriv_vec[i] -= chol_fact_sigma_woodbury_woodbury_D_inv_B_cross_cov.col(i).array().square().sum() * third_deriv[i];
+						}
+						//optimal c
+						Log::REInfo("mean1 %g", tr_PI_P_deriv_vec.mean());
+						Log::REInfo("mean1 %g", tr_PI_inv_W_deriv.mean());
+						Log::REInfo("mean1 %g", Z_SigmaI_plus_W_inv_W_deriv_PI_Z.mean());
+						CalcOptimalCVectorized(Z_SigmaI_plus_W_inv_W_deriv_PI_Z, Z_PI_P_deriv_PI_Z, tr_SigmaI_plus_W_inv_W_deriv, tr_PI_P_deriv_vec, c_opt_vec);
+						d_log_det_Sigma_W_plus_I_d_mode += c_opt_vec.cwiseProduct(tr_PI_P_deriv_vec - tr_PI_inv_W_deriv);
+						Log::REInfo("c_mean %g", c_opt_vec.mean());
+						Log::REInfo("c_max %g", c_opt_vec.maxCoeff());
+						Log::REInfo("c_min %g", c_opt_vec.minCoeff());
+					}
+					else {
+						Z_SigmaI_plus_W_inv_W_deriv_PI_Z = SigmaI_plus_W_inv_Z_.cwiseProduct(rand_vec_trace_I_);
+						d_log_det_Sigma_W_plus_I_d_mode = Z_SigmaI_plus_W_inv_W_deriv_PI_Z.rowwise().mean().cwiseProduct(-1. * third_deriv);
+					}
+					d_mll_d_mode = 0.5 * d_log_det_Sigma_W_plus_I_d_mode;
+					//For implicit derivatives: calculate (Sigma^(-1) + W)^(-1) d_mll_d_mode
+					bool has_NA_or_Inf = false;
+					CGFSVALaplaceVec(second_deriv_neg_ll_, B_rm_, D_inv_rm_, B_t_D_inv_rm_, chol_fact_sigma_woodbury, cross_cov,
+						W_D_inv_inv, chol_fact_sigma_woodbury_woodbury_, d_mll_d_mode, SigmaI_plus_W_inv_d_mll_d_mode, has_NA_or_Inf,
+						cg_max_num_it_, 0, cg_delta_conv_, ZERO_RHS_CG_THRESHOLD, cg_preconditioner_type_);
+					if (has_NA_or_Inf) {
+						Log::REDebug(CG_NA_OR_INF_WARNING_);
+					}
+					// Calculate gradient wrt covariance parameters
+					if (calc_cov_grad) {
+						sp_mat_rm_t SigmaI_deriv_rm, Bt_Dinv_Bgrad_rm, B_t_D_inv_D_grad_D_inv_B_rm;
+						double explicit_derivative, d_log_det_Sigma_W_plus_I_d_cov_pars;
+						int num_par = (int)B_grad.size();
+						for (int j = 0; j < (int)re_comps_ip_cluster_i.size(); ++j) {
+							for (int ipar = 0; ipar < re_comps_ip_cluster_i[j]->NumCovPar(); ++ipar) {
+								std::shared_ptr<den_mat_t> cross_cov_grad = re_comps_cross_cov_cluster_i[j]->GetZSigmaZtGrad(ipar, true, 0.);
+								den_mat_t sigma_ip_grad = *(re_comps_ip_cluster_i[j]->GetZSigmaZtGrad(ipar, true, 0.));
+								den_mat_t sigma_ip_inv_sigma_ip_grad = chol_fact_sigma_ip.solve(sigma_ip_grad);
+								//if (num_comps_total == 1 && ipar == 0) {
+								//	SigmaI_deriv_rm = -B_rm_.transpose() * B_t_D_inv_rm_.transpose();//SigmaI_deriv = -SigmaI for variance parameters if there is only one GP
+								//}
+								//else {
+								SigmaI_deriv_rm = sp_mat_rm_t(B_grad[ipar].transpose()) * B_t_D_inv_rm_.transpose();
+								Bt_Dinv_Bgrad_rm = SigmaI_deriv_rm.transpose();
+								B_t_D_inv_D_grad_D_inv_B_rm = B_t_D_inv_rm_ * sp_mat_rm_t(D_grad[ipar]) * B_t_D_inv_rm_.transpose();
+								SigmaI_deriv_rm += Bt_Dinv_Bgrad_rm - B_t_D_inv_D_grad_D_inv_B_rm;
+								Bt_Dinv_Bgrad_rm.resize(0, 0);
+								//}
+								// Derivative of Woodbury matrix
+								den_mat_t sigma_woodbury_grad = sigma_ip_grad;
+								den_mat_t SigmaI_deriv_rm_cross_cov(dim_mode_, num_ip);
+#pragma omp parallel for schedule(static)  
+								for (int ii = 0; ii < num_ip; ii++) {
+									SigmaI_deriv_rm_cross_cov.col(ii) = SigmaI_deriv_rm * (*cross_cov).col(ii);
+								}
+								sigma_woodbury_grad += (*cross_cov).transpose() * SigmaI_deriv_rm_cross_cov;
+								den_mat_t cross_cov_Bt_D_inv_B_cross_cov_grad = Bt_D_inv_B_cross_cov.transpose() * (*cross_cov_grad);
+								sigma_woodbury_grad += cross_cov_Bt_D_inv_B_cross_cov_grad + cross_cov_Bt_D_inv_B_cross_cov_grad.transpose();
+
+								vec_t SigmaI_deriv_mode_part = SigmaI_deriv_rm * mode_;
+								vec_t SigmaI_mode = SigmaI_rm * mode_;
+								SigmaI_deriv_mode = SigmaI_deriv_mode_part - SigmaI_rm * ((*cross_cov) * chol_fact_sigma_woodbury.solve((*cross_cov).transpose() * SigmaI_deriv_mode_part)) -
+									SigmaI_deriv_rm * ((*cross_cov) * chol_fact_sigma_woodbury.solve((*cross_cov).transpose() * SigmaI_mode)) -
+									SigmaI_rm * ((*cross_cov_grad) * chol_fact_sigma_woodbury.solve((*cross_cov).transpose() * SigmaI_mode)) -
+									SigmaI_rm * ((*cross_cov) * chol_fact_sigma_woodbury.solve((*cross_cov_grad).transpose() * SigmaI_mode)) +
+									SigmaI_rm * ((*cross_cov) * chol_fact_sigma_woodbury.solve(sigma_woodbury_grad * chol_fact_sigma_woodbury.solve((*cross_cov).transpose() * SigmaI_mode)));
+								explicit_derivative = 0.5 * (mode_.dot(SigmaI_deriv_mode));
+								Log::REInfo("mode %g", (mode_.dot(SigmaI_deriv_mode)));
+								d_log_det_Sigma_W_plus_I_d_cov_pars = 0;
+								//if (num_comps_total == 1 && ipar == 0) {
+								//	d_log_det_Sigma_W_plus_I_d_cov_pars += dim_mode_;
+								//}
+								//else {
+								d_log_det_Sigma_W_plus_I_d_cov_pars += (D_inv.diagonal().array() * D_grad[ipar].diagonal().array()).sum();
+								//}
+								d_log_det_Sigma_W_plus_I_d_cov_pars -= sigma_ip_inv_sigma_ip_grad.trace();
+								d_log_det_Sigma_W_plus_I_d_cov_pars += (chol_fact_sigma_woodbury.solve(sigma_woodbury_grad)).trace();
+								Log::REInfo("d_log_det_Sigma_W_plus_I_d_cov_pars %g", d_log_det_Sigma_W_plus_I_d_cov_pars);
+								den_mat_t SigmaI_deriv_sample_vec_part(dim_mode_, num_rand_vec_trace_),
+									SigmaI_sample_vec(dim_mode_, num_rand_vec_trace_), SigmaI_deriv_sample_vec(dim_mode_, num_rand_vec_trace_);
+								den_mat_t sample_vec_final;
+								if (cg_preconditioner_type_ == "Bt_Sigma_inv_plus_W_B") {
+									sample_vec_final = PI_Z;
+								}
+								else {
+									sample_vec_final = rand_vec_trace_I_;
+								}
+#pragma omp parallel for schedule(static)   
+								for (int i = 0; i < num_rand_vec_trace_; ++i) {
+									SigmaI_deriv_sample_vec_part.col(i) = SigmaI_deriv_rm * sample_vec_final.col(i);
+								}
+#pragma omp parallel for schedule(static)   
+								for (int i = 0; i < num_rand_vec_trace_; ++i) {
+									SigmaI_sample_vec.col(i) = SigmaI_rm * sample_vec_final.col(i);
+								}
+#pragma omp parallel for schedule(static)   
+								for (int i = 0; i < num_rand_vec_trace_; ++i) {
+									SigmaI_deriv_sample_vec.col(i) = SigmaI_deriv_sample_vec_part.col(i) - SigmaI_rm * ((*cross_cov) * chol_fact_sigma_woodbury.solve((*cross_cov).transpose() * SigmaI_deriv_sample_vec_part.col(i))) -
+										SigmaI_deriv_rm * ((*cross_cov) * chol_fact_sigma_woodbury.solve((*cross_cov).transpose() * SigmaI_sample_vec.col(i))) -
+										SigmaI_rm * ((*cross_cov_grad) * chol_fact_sigma_woodbury.solve((*cross_cov).transpose() * SigmaI_sample_vec.col(i))) -
+										SigmaI_rm * ((*cross_cov) * chol_fact_sigma_woodbury.solve((*cross_cov_grad).transpose() * SigmaI_sample_vec.col(i))) +
+										SigmaI_rm * ((*cross_cov) * chol_fact_sigma_woodbury.solve(sigma_woodbury_grad * chol_fact_sigma_woodbury.solve((*cross_cov).transpose() * SigmaI_sample_vec.col(i))));
+								}
+								vec_t sample_Sigma = (SigmaI_plus_W_inv_Z_.cwiseProduct(SigmaI_deriv_sample_vec)).colwise().sum();
+								double stoch_tr = sample_Sigma.mean();
+								d_log_det_Sigma_W_plus_I_d_cov_pars += stoch_tr;
+								Log::REInfo("stoch_tr %g", stoch_tr);
+								Log::REInfo("d_log_det_Sigma_W_plus_I_d_cov_pars %g", d_log_det_Sigma_W_plus_I_d_cov_pars);
+								if (cg_preconditioner_type_ == "Bt_Sigma_inv_plus_W_B") {
+									sp_mat_rm_t B_grad_rm = sp_mat_rm_t(B_grad[ipar]);
+									den_mat_t P_grad_PI_Z = SigmaI_deriv_sample_vec;
+									//if (!(num_comps_total == 1 && ipar == 0)) {
+#pragma omp parallel for schedule(static)  
+									for (int ii = 0; ii < num_rand_vec_trace_; ii++) {
+										P_grad_PI_Z.col(ii) += B_grad_rm.transpose() * (second_deriv_neg_ll_.cwiseProduct(B_rm_ * PI_Z.col(ii))) +
+											B_rm_.transpose() * (second_deriv_neg_ll_.cwiseProduct(B_grad_rm * PI_Z.col(ii)));
+									}
+									//}
+									den_mat_t D_inv_B_cross_cov_grad(dim_mode_, num_ip);
+#pragma omp parallel for schedule(static)  
+									for (int ii = 0; ii < num_ip; ii++) {
+										D_inv_B_cross_cov_grad.col(ii) = D_inv_rm_ * (B_rm_ * (*cross_cov_grad).col(ii));
+									}
+									den_mat_t D_inv_B_grad_cross_cov(dim_mode_, num_ip);
+									//if (num_comps_total == 1 && ipar == 0) {
+									//	D_inv_B_grad_cross_cov.setZero();
+									//}
+									//else {
+#pragma omp parallel for schedule(static)  
+									for (int ii = 0; ii < num_ip; ii++) {
+										D_inv_B_grad_cross_cov.col(ii) = D_inv_rm_ * (B_grad_rm * (*cross_cov).col(ii));
+									}
+									//}
+									den_mat_t D_inv_grad_B_cross_cov(dim_mode_, num_ip);
+									vec_t D_inv_D_grad_D_inv;
+									//if (num_comps_total == 1 && ipar == 0) {
+									//	D_inv_D_grad_D_inv = -D_inv_rm_.diagonal();
+									//}
+									//else {
+									D_inv_D_grad_D_inv = (D_inv_rm_.diagonal().array().square() * D_grad[ipar].diagonal().array()).matrix();
+									//}
+									Log::REInfo("test1 %g", -D_inv_rm_.diagonal()[0]);
+									Log::REInfo("test1 %g", D_inv_D_grad_D_inv[0]);
+#pragma omp parallel for schedule(static)  
+									for (int ii = 0; ii < num_ip; ii++) {
+										D_inv_grad_B_cross_cov.col(ii) = -D_inv_D_grad_D_inv.cwiseProduct(B_rm_ * (*cross_cov).col(ii));
+									}
+									den_mat_t D_inv_B_cross_cov_D_inv_B_cross_cov_grad = D_inv_B_cross_cov_.transpose() * (W_D_inv_inv.asDiagonal() * D_inv_B_cross_cov_grad);
+									den_mat_t D_inv_B_cross_cov_D_inv_B_cross_grad_cov = D_inv_B_cross_cov_.transpose() * (W_D_inv_inv.asDiagonal() * D_inv_B_grad_cross_cov);
+									den_mat_t D_inv_grad_B_cross_cov_D_inv_B_cross_cov = D_inv_B_cross_cov_.transpose() * (W_D_inv_inv.asDiagonal() * D_inv_grad_B_cross_cov);
+									den_mat_t sigma_woodbury_woodbury_grad = sigma_woodbury_grad -
+										D_inv_B_cross_cov_D_inv_B_cross_cov_grad -
+										D_inv_B_cross_cov_D_inv_B_cross_cov_grad.transpose() -
+										D_inv_B_cross_cov_D_inv_B_cross_grad_cov -
+										D_inv_B_cross_cov_D_inv_B_cross_grad_cov.transpose() -
+										D_inv_grad_B_cross_cov_D_inv_B_cross_cov -
+										D_inv_grad_B_cross_cov_D_inv_B_cross_cov.transpose() -
+										D_inv_B_cross_cov_.transpose() * (((vec_t)((W_D_inv_inv.array().square() * D_inv_D_grad_D_inv.array()).matrix())).asDiagonal() * D_inv_B_cross_cov_);
+									double tr_PI_P_grad = -(W_D_inv_inv.array() * D_inv_D_grad_D_inv.array()).sum() -
+										(chol_fact_sigma_woodbury.solve(sigma_woodbury_grad)).trace() +
+										(chol_fact_sigma_woodbury_woodbury_.solve(sigma_woodbury_woodbury_grad)).trace();
+									Log::REInfo("Test %g", stoch_tr);
+									Log::REInfo("Test %g", tr_PI_P_grad);
+									vec_t sample_P = (PI_Z.cwiseProduct(P_grad_PI_Z)).colwise().sum();
+									CalcOptimalC(sample_Sigma, sample_P, stoch_tr, tr_PI_P_grad, c_opt);
+									d_log_det_Sigma_W_plus_I_d_cov_pars -= c_opt * (sample_P.mean() - tr_PI_P_grad);
+									Log::REInfo("Test %g", sample_P.mean());
+									Log::REInfo("Test %g", c_opt);
+								}
+								Log::REInfo("tr final %g", d_log_det_Sigma_W_plus_I_d_cov_pars);
+								explicit_derivative += 0.5 * d_log_det_Sigma_W_plus_I_d_cov_pars;
+								Log::REInfo("explicit_derivative %g", explicit_derivative);
+								cov_grad[ipar] = explicit_derivative - SigmaI_plus_W_inv_d_mll_d_mode.dot(SigmaI_deriv_mode);
+								Log::REInfo("SigmaI_plus_W_inv_d_mll_d_mode %g", SigmaI_plus_W_inv_d_mll_d_mode.dot(SigmaI_deriv_mode));
+							}
+						}
+					}
+					//Calculate gradient wrt fixed effects
+					vec_t SigmaI_plus_W_inv_diag;
+					if (use_Z_for_duplicates_ && (calc_F_grad || calc_aux_par_grad)) {
+						//Stochastic Trace: Calculate diagonal of SigmaI_plus_W_inv for gradient of approx. marginal likelihood wrt. F
+						SigmaI_plus_W_inv_diag = d_log_det_Sigma_W_plus_I_d_mode;
+						SigmaI_plus_W_inv_diag.array() *= -1. / third_deriv.array();
+					}
+					if (calc_F_grad) {
+						if (use_Z_for_duplicates_) {
+							fixed_effect_grad = -first_deriv_ll_data_scale_;
+#pragma omp parallel for schedule(static)
+							for (data_size_t i = 0; i < num_data_; ++i) {
+								fixed_effect_grad[i] += -0.5 * third_deriv_data_scale[i] * SigmaI_plus_W_inv_diag[random_effects_indices_of_data_[i]] -
+									second_deriv_neg_ll_data_scale_[i] * SigmaI_plus_W_inv_d_mll_d_mode[random_effects_indices_of_data_[i]];// implicit derivative
+							}
+						}
+						else {
+							vec_t d_mll_d_F_implicit = -(SigmaI_plus_W_inv_d_mll_d_mode.array() * second_deriv_neg_ll_.array()).matrix();// implicit derivative
+							fixed_effect_grad = -first_deriv_ll_ + d_mll_d_mode + d_mll_d_F_implicit;
+						}
+					}
+					//Calculate gradient wrt additional likelihood parameters
+					if (calc_aux_par_grad) {
+						vec_t neg_likelihood_deriv(num_aux_pars_);//derivative of the negative log-likelihood wrt additional parameters of the likelihood
+						vec_t second_deriv(num_data_);//second derivative of the log-likelihood with respect to (i) the location parameter and (ii) an additional parameter of the likelihood
+						vec_t neg_third_deriv(num_data_);//negative third derivative of the log-likelihood with respect to (i) two times the location parameter and (ii) an additional parameter of the likelihood
+						vec_t d_mode_d_aux_par;
+						CalcGradNegLogLikAuxPars(y_data, y_data_int, location_par_ptr, num_data_, neg_likelihood_deriv.data());
+						for (int ind_ap = 0; ind_ap < num_aux_pars_; ++ind_ap) {
+							CalcSecondNegThirdDerivLogLikAuxParsLocPar(y_data, y_data_int, location_par_ptr, num_data_, ind_ap, second_deriv.data(), neg_third_deriv.data());
+							double d_detmll_d_aux_par = 0., implicit_derivative = 0.;
+							if (use_Z_for_duplicates_) {
+#pragma omp parallel for schedule(static) reduction(+:d_detmll_d_aux_par, implicit_derivative)
+								for (data_size_t i = 0; i < num_data_; ++i) {
+									d_detmll_d_aux_par += neg_third_deriv[i] * SigmaI_plus_W_inv_diag[random_effects_indices_of_data_[i]];
+									implicit_derivative += second_deriv[i] * SigmaI_plus_W_inv_d_mll_d_mode[random_effects_indices_of_data_[i]];
+								}
+							}
+							else {
+								if (cg_preconditioner_type_ == "Bt_Sigma_inv_plus_W_B") {
+									//Stochastic Trace: Calculate tr((Sigma^(-1) + W)^(-1) dW/daux)
+									vec_t zt_SigmaI_plus_W_inv_W_deriv_PI_z = ((SigmaI_plus_W_inv_Z_.cwiseProduct(neg_third_deriv.asDiagonal() * PI_Z)).colwise().sum()).transpose();
+									double tr_SigmaI_plus_W_inv_W_deriv_d = zt_SigmaI_plus_W_inv_W_deriv_PI_z.mean();
+									d_detmll_d_aux_par = tr_SigmaI_plus_W_inv_W_deriv_d;
+									//variance reduction
+									//stochastic tr(P^(-1) dP/daux), where dP/daux = B^T dW/daux B
+									sp_mat_rm_t P_deriv_rm = B_rm_.transpose() * neg_third_deriv.asDiagonal() * B_rm_;
+									vec_t W_D_inv_inv_neg_third_deriv_W_D_inv_inv = (W_D_inv_inv.array().square() * neg_third_deriv.array()).matrix();
+									double tr_D_inv_plus_W_inv_W_deriv = (W_D_inv_inv.cwiseProduct(neg_third_deriv)).sum() +
+										(chol_fact_sigma_woodbury_woodbury_.solve(D_inv_B_cross_cov_.transpose() * (W_D_inv_inv_neg_third_deriv_W_D_inv_inv.asDiagonal() * D_inv_B_cross_cov_))).trace();
+									vec_t zt_PI_P_deriv_PI_z = ((PI_Z.cwiseProduct(P_deriv_rm * PI_Z)).colwise().sum()).transpose();
+									double tr_PI_P_deriv = zt_PI_P_deriv_PI_z.mean();
+									//optimal 
+									CalcOptimalC(zt_SigmaI_plus_W_inv_W_deriv_PI_z, zt_PI_P_deriv_PI_z, tr_SigmaI_plus_W_inv_W_deriv_d, tr_D_inv_plus_W_inv_W_deriv, c_opt);
+									d_detmll_d_aux_par -= c_opt * (tr_PI_P_deriv - tr_D_inv_plus_W_inv_W_deriv);
+								}
+								else {
+									d_detmll_d_aux_par = (SigmaI_plus_W_inv_Z_.cwiseProduct(neg_third_deriv.asDiagonal() * PI_Z)).colwise().sum().mean();
+								}
+#pragma omp parallel for schedule(static) reduction(+:d_detmll_d_aux_par, implicit_derivative)
+								for (data_size_t i = 0; i < num_data_; ++i) {
+									implicit_derivative += second_deriv[i] * SigmaI_plus_W_inv_d_mll_d_mode[i];
+								}
+							}
+							aux_par_grad[ind_ap] = neg_likelihood_deriv[ind_ap] + 0.5 * d_detmll_d_aux_par + implicit_derivative;
+						}
+					}//end calc_aux_par_grad
+				}
+			}
+			else {
+				// Calculate (Sigma^-1 + W)^-1
+				sp_mat_t L_inv(dim_mode_, dim_mode_);
+				L_inv.setIdentity();
+				TriangularSolveGivenCholesky<chol_sp_mat_t, sp_mat_t, sp_mat_t, sp_mat_t>(chol_fact_SigmaI_plus_ZtWZ_vecchia_, L_inv, L_inv, false);
+				vec_t SigmaI_plus_W_inv_d_mll_d_mode, SigmaI_plus_W_inv_diag;
+				sp_mat_t SigmaI_plus_W_inv;
+				sp_mat_t SigmaI = B.transpose() * D_inv * B;
+				// Calculate gradient wrt covariance parameters
+				if (calc_cov_grad) {
+					double explicit_derivative;
+					sp_mat_t SigmaI_deriv, BgradT_Dinv_B, Bt_Dinv_Bgrad;
+					sp_mat_t D_inv_B = D_inv * B;
+					int par_count = 0;
+
+					den_mat_t sigma_resid_plus_W_inv_cross_cov = chol_fact_SigmaI_plus_ZtWZ_vecchia_.solve(second_deriv_neg_ll_.asDiagonal() * (*cross_cov));
+					den_mat_t sigma_resid_inv_sigma_resid_plus_W_inv_cross_cov(dim_mode_,num_ip);
+#pragma omp parallel for schedule(static)   
+					for (int ii = 0; ii < num_ip; ++ii) {
+						sigma_resid_inv_sigma_resid_plus_W_inv_cross_cov.col(ii) = B_t_D_inv_rm_ * (B_rm_ * sigma_resid_plus_W_inv_cross_cov.col(ii));
+					}
+					den_mat_t sigma_woodbury_2 = (*sigma_ip) + (*cross_cov).transpose() * sigma_resid_inv_sigma_resid_plus_W_inv_cross_cov;
+					chol_den_mat_t chol_fact_sigma_woodbury_2;
+					chol_fact_sigma_woodbury_2.compute(sigma_woodbury_2);
+					for (int j = 0; j < (int)re_comps_ip_cluster_i.size(); ++j) {
+						for (int ipar = 0; ipar < re_comps_ip_cluster_i[j]->NumCovPar(); ++ipar) {
+							std::shared_ptr<den_mat_t> cross_cov_grad = re_comps_cross_cov_cluster_i[j]->GetZSigmaZtGrad(ipar, true, 0.);
+							den_mat_t sigma_ip_grad = *(re_comps_ip_cluster_i[j]->GetZSigmaZtGrad(ipar, true, 0.));
+							den_mat_t sigma_ip_inv_sigma_ip_grad = chol_fact_sigma_ip.solve(sigma_ip_grad);
+							// Calculate SigmaI_deriv
+							//if (num_comps_total == 1 && ipar == 0) {
+							//	SigmaI_deriv = -B.transpose() * D_inv_B;//SigmaI_deriv = -SigmaI for variance parameters if there is only one GP
+							//}
+							//else {
+								SigmaI_deriv = B_grad[ipar].transpose() * D_inv_B;
+								Bt_Dinv_Bgrad = SigmaI_deriv.transpose();
+								SigmaI_deriv += Bt_Dinv_Bgrad - D_inv_B.transpose() * D_grad[ipar] * D_inv_B;
+								Bt_Dinv_Bgrad.resize(0, 0);
+							//}
+							// Derivative of Woodbury matrix
+							den_mat_t sigma_woodbury_grad = sigma_ip_grad;
+							sp_mat_rm_t SigmaI_deriv_rm = sp_mat_rm_t(SigmaI_deriv);
+							den_mat_t SigmaI_deriv_rm_cross_cov(dim_mode_,num_ip);
+#pragma omp parallel for schedule(static)  
+							for (int ii = 0; ii < num_ip; ii++) {
+								SigmaI_deriv_rm_cross_cov.col(ii) = SigmaI_deriv_rm * (*cross_cov).col(ii);
+							}
+							sigma_woodbury_grad += (*cross_cov).transpose() * SigmaI_deriv_rm_cross_cov;
+							den_mat_t cross_cov_Bt_D_inv_B_cross_cov_grad = Bt_D_inv_B_cross_cov.transpose() * (*cross_cov_grad);
+							sigma_woodbury_grad += cross_cov_Bt_D_inv_B_cross_cov_grad + cross_cov_Bt_D_inv_B_cross_cov_grad.transpose();
+							if (ipar == 0) {
+								// Calculate SigmaI_plus_W_inv = L_inv.transpose() * L_inv at non-zero entries of SigmaI_deriv
+								//	Note: fully calculating SigmaI_plus_W_inv = L_inv.transpose() * L_inv is very slow
+								SigmaI_plus_W_inv = SigmaI_deriv;
+								CalcLtLGivenSparsityPattern<sp_mat_t>(L_inv, SigmaI_plus_W_inv, true);
+								den_mat_t SigmaI_plus_W_inv_Bt_D_inv_B_cross_cov = chol_fact_SigmaI_plus_ZtWZ_vecchia_.solve(Bt_D_inv_B_cross_cov);
+								den_mat_t woodbury_SigmaI_plus_W_inv_Bt_D_inv_B_cross_cov_t;
+								TriangularSolveGivenCholesky<chol_den_mat_t, den_mat_t, den_mat_t, den_mat_t>(chol_fact_sigma_woodbury_woodbury_,
+									SigmaI_plus_W_inv_Bt_D_inv_B_cross_cov.transpose(), woodbury_SigmaI_plus_W_inv_Bt_D_inv_B_cross_cov_t,false);
+								vec_t SigmaI_plus_W_inv_diag_part = (woodbury_SigmaI_plus_W_inv_Bt_D_inv_B_cross_cov_t.cwiseProduct(woodbury_SigmaI_plus_W_inv_Bt_D_inv_B_cross_cov_t)).colwise().sum();
+								SigmaI_plus_W_inv_diag = (SigmaI_plus_W_inv.diagonal().array() + SigmaI_plus_W_inv_diag_part.array()).matrix();
+								d_mll_d_mode = -0.5 * (SigmaI_plus_W_inv_diag.array() * third_deriv.array()).matrix();
+								Log::REInfo("d_mll_d_mode %g", d_mll_d_mode[10]);
+								vec_t Sigma_d_mll_d_mode_part = B_rm_.transpose().triangularView<Eigen::UpLoType::UnitUpper>().solve(d_mll_d_mode);
+								vec_t Sigma_d_mll_d_mode_part1 = D_inv_B_rm_.triangularView<Eigen::UpLoType::Lower>().solve(Sigma_d_mll_d_mode_part);
+								vec_t Sigma_d_mll_d_mode = Sigma_d_mll_d_mode_part1 + (*cross_cov) * (chol_fact_sigma_ip.solve((*cross_cov).transpose() * d_mll_d_mode));
+								vec_t W_Sigma_d_mll_d_mode = second_deriv_neg_ll_.asDiagonal() * Sigma_d_mll_d_mode;
+								vec_t SigmaI_plus_W_inv_d_mll_d_mode_part = B_t_D_inv_rm_ * (B_rm_ * chol_fact_SigmaI_plus_ZtWZ_vecchia_.solve(W_Sigma_d_mll_d_mode));
+								SigmaI_plus_W_inv_d_mll_d_mode = second_deriv_neg_ll_.cwiseInverse().asDiagonal() * (SigmaI_plus_W_inv_d_mll_d_mode_part - sigma_resid_inv_sigma_resid_plus_W_inv_cross_cov * chol_fact_sigma_woodbury_2.solve((*cross_cov).transpose() * SigmaI_plus_W_inv_d_mll_d_mode_part));
+							}//end if ipar == 0
+							vec_t SigmaI_deriv_mode_part = SigmaI_deriv * mode_;
+							vec_t SigmaI_mode = SigmaI * mode_;
+							vec_t SigmaI_deriv_mode = SigmaI_deriv_mode_part - SigmaI * ((*cross_cov) * chol_fact_sigma_woodbury.solve((*cross_cov).transpose() * SigmaI_deriv_mode_part)) -
+								SigmaI_deriv * ((*cross_cov) * chol_fact_sigma_woodbury.solve((*cross_cov).transpose() * SigmaI_mode)) - 
+								SigmaI * ((*cross_cov_grad) * chol_fact_sigma_woodbury.solve((*cross_cov).transpose() * SigmaI_mode)) -
+								SigmaI * ((*cross_cov) * chol_fact_sigma_woodbury.solve((*cross_cov_grad).transpose() * SigmaI_mode)) + 
+								SigmaI * ((*cross_cov) * chol_fact_sigma_woodbury.solve(sigma_woodbury_grad * chol_fact_sigma_woodbury.solve((*cross_cov).transpose() * SigmaI_mode)));
+							explicit_derivative = 0.5 * (mode_.dot(SigmaI_deriv_mode) + 
+								(SigmaI_deriv.cwiseProduct(SigmaI_plus_W_inv)).sum());
+							Log::REInfo("mode %g", (mode_.dot(SigmaI_deriv_mode)));
+							//if (num_comps_total == 1 && ipar == 0) {
+							//	explicit_derivative += 0.5 * dim_mode_;
+							//}
+							//else {
+								explicit_derivative += 0.5 * (D_inv.diagonal().array() * D_grad[ipar].diagonal().array()).sum();
+							//}
+								Log::REInfo("test1 %g", 0.5 * (D_inv.diagonal().array() * D_grad[ipar].diagonal().array()).sum());
+								Log::REInfo("test1 %g", 0.5 * dim_mode_);
+							explicit_derivative -= 0.5 * sigma_ip_inv_sigma_ip_grad.trace();
+							den_mat_t sigma_woodbury_woodbury_grad = sigma_woodbury_grad;
+							den_mat_t Bt_D_inv_B_cross_cov_grad(dim_mode_, num_ip);
+#pragma omp parallel for schedule(static)  
+							for (int ii = 0; ii < num_ip; ii++) {
+								Bt_D_inv_B_cross_cov_grad.col(ii) = B_t_D_inv_rm_ * (B_rm_ * (*cross_cov_grad).col(ii));
+							}
+							den_mat_t Sigma_I_cross_cov_SigmaI_plus_W_inv_Sigma_I_cross_cov_grad = Bt_D_inv_B_cross_cov.transpose() * (chol_fact_SigmaI_plus_ZtWZ_vecchia_.solve(Bt_D_inv_B_cross_cov_grad));
+							sigma_woodbury_woodbury_grad -= Sigma_I_cross_cov_SigmaI_plus_W_inv_Sigma_I_cross_cov_grad + Sigma_I_cross_cov_SigmaI_plus_W_inv_Sigma_I_cross_cov_grad.transpose();
+							den_mat_t Sigma_I_cross_cov_SigmaI_plus_W_invSigmaI_deriv_cross_cov = Bt_D_inv_B_cross_cov.transpose() * chol_fact_SigmaI_plus_ZtWZ_vecchia_.solve(SigmaI_deriv_rm_cross_cov);
+							sigma_woodbury_woodbury_grad -= Sigma_I_cross_cov_SigmaI_plus_W_invSigmaI_deriv_cross_cov + Sigma_I_cross_cov_SigmaI_plus_W_invSigmaI_deriv_cross_cov.transpose();
+							den_mat_t SigmaI_plus_W_invSigmaI_cross_cov(dim_mode_, num_ip);
+#pragma omp parallel for schedule(static)  
+							for (int ii = 0; ii < num_ip; ii++) {
+								SigmaI_plus_W_invSigmaI_cross_cov.col(ii) = chol_fact_SigmaI_plus_ZtWZ_vecchia_.solve(SigmaI_deriv_rm * chol_fact_SigmaI_plus_ZtWZ_vecchia_.solve(Bt_D_inv_B_cross_cov.col(ii)));
+							}
+							sigma_woodbury_woodbury_grad += Bt_D_inv_B_cross_cov.transpose() * SigmaI_plus_W_invSigmaI_cross_cov;
+							explicit_derivative += 0.5 * (chol_fact_sigma_woodbury_woodbury_.solve(sigma_woodbury_woodbury_grad)).trace();
+							Log::REInfo("explicit_derivative %g", explicit_derivative);
+							cov_grad[par_count] = explicit_derivative - SigmaI_plus_W_inv_d_mll_d_mode.dot(SigmaI_deriv_mode);//add implicit derivative
+							Log::REInfo("tr final %g", (SigmaI_deriv.cwiseProduct(SigmaI_plus_W_inv)).sum() +
+								(chol_fact_sigma_woodbury_woodbury_.solve(sigma_woodbury_woodbury_grad)).trace() + 
+								(D_inv.diagonal().array() * D_grad[ipar].diagonal().array()).sum()-
+								sigma_ip_inv_sigma_ip_grad.trace());
+							Log::REInfo("stoch_tr %g", (SigmaI_deriv.cwiseProduct(SigmaI_plus_W_inv)).sum() + 
+								(chol_fact_sigma_woodbury_woodbury_.solve(sigma_woodbury_woodbury_grad)).trace()-
+								(chol_fact_sigma_woodbury.solve(sigma_woodbury_grad)).trace());
+							Log::REInfo("SigmaI_plus_W_inv_d_mll_d_mode %g", SigmaI_plus_W_inv_d_mll_d_mode.dot(SigmaI_deriv_mode));
+							par_count++;
+						}
+					}
+				}//end calc_cov_grad
+				if (calc_F_grad || calc_aux_par_grad) {
+					if (!calc_cov_grad) {
+						SigmaI_plus_W_inv = D_inv;
+						CalcLtLGivenSparsityPattern<sp_mat_t>(L_inv, SigmaI_plus_W_inv, true);
+						den_mat_t SigmaI_plus_W_inv_Bt_D_inv_B_cross_cov = chol_fact_SigmaI_plus_ZtWZ_vecchia_.solve(Bt_D_inv_B_cross_cov);
+						den_mat_t woodbury_SigmaI_plus_W_inv_Bt_D_inv_B_cross_cov_t;
+						TriangularSolveGivenCholesky<chol_den_mat_t, den_mat_t, den_mat_t, den_mat_t>(chol_fact_sigma_woodbury_woodbury_,
+							SigmaI_plus_W_inv_Bt_D_inv_B_cross_cov.transpose(), woodbury_SigmaI_plus_W_inv_Bt_D_inv_B_cross_cov_t,false);
+						SigmaI_plus_W_inv_diag = (woodbury_SigmaI_plus_W_inv_Bt_D_inv_B_cross_cov_t.cwiseProduct(woodbury_SigmaI_plus_W_inv_Bt_D_inv_B_cross_cov_t)).colwise().sum();
+						SigmaI_plus_W_inv_diag = (SigmaI_plus_W_inv.diagonal().array() + SigmaI_plus_W_inv_diag.array()).matrix();
+						d_mll_d_mode = -0.5 * (SigmaI_plus_W_inv_diag.array() * third_deriv.array()).matrix();
+
+						den_mat_t sigma_resid_plus_W_inv_cross_cov = chol_fact_SigmaI_plus_ZtWZ_vecchia_.solve(second_deriv_neg_ll_.asDiagonal() * (*cross_cov));
+						den_mat_t sigma_resid_inv_sigma_resid_plus_W_inv_cross_cov(dim_mode_, num_ip);
+#pragma omp parallel for schedule(static)   
+						for (int ii = 0; ii < num_ip; ++ii) {
+							sigma_resid_inv_sigma_resid_plus_W_inv_cross_cov.col(ii) = B_t_D_inv_rm_ * (B_rm_ * sigma_resid_plus_W_inv_cross_cov.col(ii));
+						}
+						den_mat_t sigma_woodbury_2 = (*sigma_ip) + (*cross_cov).transpose() * sigma_resid_inv_sigma_resid_plus_W_inv_cross_cov;
+						chol_den_mat_t chol_fact_sigma_woodbury_2;
+						chol_fact_sigma_woodbury_2.compute(sigma_woodbury_2);
+
+						vec_t Sigma_d_mll_d_mode_part = B_rm_.transpose().triangularView<Eigen::UpLoType::UnitUpper>().solve(d_mll_d_mode);
+						Sigma_d_mll_d_mode_part = D_inv_B_rm_.triangularView<Eigen::UpLoType::Lower>().solve(Sigma_d_mll_d_mode_part);
+						vec_t Sigma_d_mll_d_mode = Sigma_d_mll_d_mode_part + (*cross_cov) * (chol_fact_sigma_ip.solve((*cross_cov).transpose() * d_mll_d_mode));
+						vec_t W_d_mll_d_mode = second_deriv_neg_ll_.asDiagonal() * d_mll_d_mode;
+						vec_t SigmaI_plus_W_inv_d_mll_d_mode_part = B_t_D_inv_rm_ * (B_rm_ * chol_fact_SigmaI_plus_ZtWZ_vecchia_.solve(W_d_mll_d_mode));
+						SigmaI_plus_W_inv_d_mll_d_mode = second_deriv_neg_ll_.cwiseInverse().asDiagonal() * (SigmaI_plus_W_inv_d_mll_d_mode_part - sigma_resid_inv_sigma_resid_plus_W_inv_cross_cov * chol_fact_sigma_woodbury_2.solve((*cross_cov).transpose() * SigmaI_plus_W_inv_d_mll_d_mode_part));
+					}
+					else if (calc_aux_par_grad || use_Z_for_duplicates_) {
+						SigmaI_plus_W_inv_diag = (SigmaI_plus_W_inv.diagonal().array() + SigmaI_plus_W_inv_diag.array()).matrix();
+					}
+				}
+				// Calculate gradient wrt fixed effects
+				if (calc_F_grad) {
+					if (use_Z_for_duplicates_) {
+						fixed_effect_grad = -first_deriv_ll_data_scale_;
+#pragma omp parallel for schedule(static)
+						for (data_size_t i = 0; i < num_data_; ++i) {
+							fixed_effect_grad[i] += -0.5 * third_deriv_data_scale[i] * SigmaI_plus_W_inv_diag[random_effects_indices_of_data_[i]] -
+								second_deriv_neg_ll_data_scale_[i] * SigmaI_plus_W_inv_d_mll_d_mode[random_effects_indices_of_data_[i]];// implicit derivative
+						}
+					}
+					else {
+						vec_t d_mll_d_F_implicit = -(SigmaI_plus_W_inv_d_mll_d_mode.array() * second_deriv_neg_ll_.array()).matrix();// implicit derivative
+						fixed_effect_grad = -first_deriv_ll_ + d_mll_d_mode + d_mll_d_F_implicit;
+					}
+				}//end calc_F_grad
+				// calculate gradient wrt additional likelihood parameters
+				if (calc_aux_par_grad) {
+					vec_t neg_likelihood_deriv(num_aux_pars_);//derivative of the negative log-likelihood wrt additional parameters of the likelihood
+					vec_t second_deriv(num_data_);//second derivative of the log-likelihood with respect to (i) the location parameter and (ii) an additional parameter of the likelihood
+					vec_t neg_third_deriv(num_data_);//negative third derivative of the log-likelihood with respect to (i) two times the location parameter and (ii) an additional parameter of the likelihood
+					vec_t d_mode_d_aux_par;
+					CalcGradNegLogLikAuxPars(y_data, y_data_int, location_par_ptr, num_data_, neg_likelihood_deriv.data());
+					for (int ind_ap = 0; ind_ap < num_aux_pars_; ++ind_ap) {
+						CalcSecondNegThirdDerivLogLikAuxParsLocPar(y_data, y_data_int, location_par_ptr, num_data_, ind_ap, second_deriv.data(), neg_third_deriv.data());
+						double d_detmll_d_aux_par = 0., implicit_derivative = 0.;
+						if (use_Z_for_duplicates_) {
+#pragma omp parallel for schedule(static) reduction(+:d_detmll_d_aux_par, implicit_derivative)
+							for (data_size_t i = 0; i < num_data_; ++i) {
+								d_detmll_d_aux_par += neg_third_deriv[i] * SigmaI_plus_W_inv_diag[random_effects_indices_of_data_[i]];
+								implicit_derivative += second_deriv[i] * SigmaI_plus_W_inv_d_mll_d_mode[random_effects_indices_of_data_[i]];
+							}
+						}
+						else {
+#pragma omp parallel for schedule(static) reduction(+:d_detmll_d_aux_par, implicit_derivative)
+							for (data_size_t i = 0; i < num_data_; ++i) {
+								d_detmll_d_aux_par += neg_third_deriv[i] * SigmaI_plus_W_inv_diag[i];
+								implicit_derivative += second_deriv[i] * SigmaI_plus_W_inv_d_mll_d_mode[i];
+							}
+						}
+						aux_par_grad[ind_ap] = neg_likelihood_deriv[ind_ap] + 0.5 * d_detmll_d_aux_par + implicit_derivative;
+					}
+				}//end calc_aux_par_grad
+			}
+		}//end CalcGradNegMargLikelihoodLaplaceApproxFSVA
+
+		/*!
+		* \brief Calculate the gradient of the negative Laplace-approximated marginal log-likelihood wrt covariance parameters,
+		*		fixed effects (e.g., for linear regression coefficients), and additional likelihood-related parameters.
+		*		Calculations are done by factorizing ("inverting) (Sigma^-1 + W) where it is assumed that an approximate Cholesky factor
 		*		of Sigma^-1 has previously been calculated using a Vecchia approximation.
 		*		This version is used for the Laplace approximation when there are only GP random effects and the Vecchia approximation is used.
 		*		Caveat: Sigma^-1 + W can be not very sparse
@@ -2782,12 +4035,16 @@ namespace GPBoost {
 						SigmaI_plus_W_inv_d_mll_d_mode = L_inv.transpose() * (L_inv * d_mll_d_mode);
 						vec_t SigmaI_deriv_mode = SigmaI_deriv * mode_;
 						explicit_derivative = 0.5 * (mode_.dot(SigmaI_deriv_mode) + (SigmaI_deriv.cwiseProduct(SigmaI_plus_W_inv)).sum());
+						Log::REInfo("sigmaI_mode %g", mode_.dot(SigmaI_deriv_mode));
+						Log::REInfo("sigmaI_mode %g", (SigmaI_deriv.cwiseProduct(SigmaI_plus_W_inv)).sum());
 						if (num_comps_total == 1 && j == 0) {
 							explicit_derivative += 0.5 * dim_mode_;
 						}
 						else {
 							explicit_derivative += 0.5 * (D_inv.diagonal().array() * D_grad[j].diagonal().array()).sum();
 						}
+						Log::REInfo("Test %g", explicit_derivative);
+						Log::REInfo("Test %g", SigmaI_plus_W_inv_d_mll_d_mode.dot(SigmaI_deriv_mode));
 						cov_grad[j] = explicit_derivative - SigmaI_plus_W_inv_d_mll_d_mode.dot(SigmaI_deriv_mode);//add implicit derivative
 					}
 				}//end calc_cov_grad
@@ -2851,7 +4108,7 @@ namespace GPBoost {
 		* \brief Calculate the gradient of the negative Laplace-approximated marginal log-likelihood wrt covariance parameters,
 		*		fixed effects (e.g., for linear regression coefficients), and additional likelihood-related parameters.
 		*		Calculations are done by factorizing ("inverting) (Sigma^-1 + W) where it is assumed that an approximate Cholesky factor
-		*		of Sigma^-1 has previously been calculated using a Vecchia approximation.
+		*		of Sigma^-1 has previously been calculated using a FITC approximation.
 		*		This version is used for the Laplace approximation when there are only GP random effects and the Vecchia approximation is used.
 		*		Caveat: Sigma^-1 + W can be not very sparse
 		* \param y_data Response variable data if response variable is continuous
@@ -2961,9 +4218,16 @@ namespace GPBoost {
 						explicit_derivative = -((*cross_cov_grad).transpose() * a_vec_).dot(sigma_ip_inv_cross_cov_T_a_vec) +
 							0.5 * sigma_ip_inv_cross_cov_T_a_vec.dot(sigma_ip_grad * sigma_ip_inv_cross_cov_T_a_vec) -
 								0.5 * a_vec_.dot(fitc_diag_grad.asDiagonal() * a_vec_);//derivative of mode^T Sigma^-1 mode
+						Log::REInfo("sigmaI_mode %g", -2.*((*cross_cov_grad).transpose() * a_vec_).dot(sigma_ip_inv_cross_cov_T_a_vec) +
+							sigma_ip_inv_cross_cov_T_a_vec.dot(sigma_ip_grad * sigma_ip_inv_cross_cov_T_a_vec) -
+							a_vec_.dot(fitc_diag_grad.asDiagonal() * a_vec_));
 						explicit_derivative += 0.5 * sigma_woodbury_inv_sigma_woodbury_grad.trace() -
 							0.5 * sigma_ip_inv_sigma_ip_grad.trace() +
 							0.5 * fitc_diag_grad.dot(fitc_diag_plus_WI_inv);//derivative of log determinant
+						Log::REInfo("sigmaI_mode %g", sigma_woodbury_inv_sigma_woodbury_grad.trace() -
+							sigma_ip_inv_sigma_ip_grad.trace() +
+							fitc_diag_grad.dot(fitc_diag_plus_WI_inv));
+
 						// Calculate implicit derivative (through mode) of approx. mariginal log-likelihood
 						vec_t SigmaDeriv_first_deriv_ll = (*cross_cov_grad) * (sigma_ip_inv_cross_cov_T * first_deriv_ll_);
 						SigmaDeriv_first_deriv_ll += sigma_ip_inv_cross_cov_T.transpose() * ((*cross_cov_grad).transpose() * first_deriv_ll_);
@@ -2973,6 +4237,8 @@ namespace GPBoost {
 						vec_t vaux = chol_fact_dense_Newton_.solve(rhs);
 						vec_t d_mode_d_par = WI.asDiagonal() *
 							(fitc_diag_plus_WI_inv.asDiagonal() * SigmaDeriv_first_deriv_ll - cross_cov_T_fitc_diag_plus_WI_inv.transpose() * vaux);
+						Log::REInfo("Test %g", explicit_derivative);
+						Log::REInfo("Test %g", d_mll_d_mode.dot(d_mode_d_par));
 						cov_grad[par_count] = explicit_derivative + d_mll_d_mode.dot(d_mode_d_par);
 						////for debugging
 						//if (ipar == 0) {
@@ -3239,6 +4505,345 @@ namespace GPBoost {
 				}
 			}
 		}//end PredictLaplaceApproxOnlyOneGroupedRECalculationsOnREScale
+
+		/*!
+		* \brief Make predictions for the (latent) random effects when using the Laplace approximation.
+		*		Calculations are done by factorizing ("inverting) (Sigma^-1 + W) where it is assumed that an approximate Cholesky factor
+		*		of Sigma^-1 has previously been calculated using a Full-Scale-Vecchia approximation.
+		*		This version is used for the Laplace approximation when there are only GP random effects and the Vecchia approximation is used.
+		*		Caveat: Sigma^-1 + W can be not very sparse
+		* \param y_data Response variable data if response variable is continuous
+		* \param y_data_int Response variable data if response variable is integer-valued
+		* \param fixed_effects Fixed effects component of location parameter
+		* \param B Matrix B in Vecchia approximation for observed locations, Sigma^-1 = B^T D^-1 B ("=" Cholesky factor)
+		* \param D_inv Diagonal matrix D^-1 in Vecchia approximation for observed locations
+		* \param Bpo Lower left part of matrix B in joint Vecchia approximation for observed and prediction locations with non-zero off-diagonal entries corresponding to the nearest neighbors of the prediction locations among the observed locations
+		* \param Bp Lower right part of matrix B in joint Vecchia approximation for observed and prediction locations with non-zero off-diagonal entries corresponding to the nearest neighbors of the prediction locations among the prediction locations
+		* \param Dp Diagonal matrix with lower right part of matrix D in joint Vecchia approximation for observed and prediction locations
+		* \param chol_fact_sigma_ip Cholesky factor of 'sigma_ip'
+		* \param chol_fact_sigma_woodbury Cholesky factor of 'sigma_ip + sigma_mn sigma_resid^-1 sigma_mn'
+		* \param cross_cov Cross - covariance matrix between inducing points and all data points
+		* \param cross_cov_pred_ip Cross covariance matrix between prediction points and inducing points
+		* \param pred_mean[out] Predictive mean
+		* \param pred_cov[out] Predictive covariance matrix
+		* \param pred_var[out] Predictive variances
+		* \param calc_pred_cov If true, predictive covariance matrix is also calculated
+		* \param calc_pred_var If true, predictive variances are also calculated
+		* \param calc_mode If true, the mode of the random effects posterior is calculated otherwise the values in mode and a_vec_ are used (default=false)
+		* \param CondObsOnly If true, the nearest neighbors for the predictions are found only among the observed data and Bp is an identity matrix
+		*/
+		void PredictLaplaceApproxFSVA(const double* y_data,
+			const int* y_data_int,
+			const double* fixed_effects,
+			const sp_mat_t& B,
+			const sp_mat_t& D_inv,
+			const sp_mat_t& Bpo,
+			sp_mat_t& Bp,
+			const vec_t& Dp,
+			const std::shared_ptr<den_mat_t> sigma_ip,
+			const chol_den_mat_t& chol_fact_sigma_ip,
+			const den_mat_t& sigma_woodbury,
+			const chol_den_mat_t& chol_fact_sigma_woodbury,
+			const den_mat_t& chol_ip_cross_cov,
+			const std::shared_ptr<den_mat_t> cross_cov,
+			const den_mat_t& cross_cov_pred_ip,
+			vec_t& pred_mean,
+			T_mat& pred_cov,
+			vec_t& pred_var,
+			bool calc_pred_cov,
+			bool calc_pred_var,
+			bool calc_mode,
+			bool CondObsOnly) {
+			if (calc_mode) {// Calculate mode and Cholesky factor of Sigma^-1 + W at mode
+				double mll;//approximate marginal likelihood. This is a by-product that is not used here.
+				FindModePostRandEffCalcMLLFSAVecchia(y_data, y_data_int, fixed_effects, sigma_ip, chol_fact_sigma_ip, 
+					chol_fact_sigma_woodbury, chol_ip_cross_cov, cross_cov, sigma_woodbury, B, D_inv, false, false, mll);
+			}
+			if (na_or_inf_during_last_call_to_find_mode_) {
+				Log::REFatal(NA_OR_INF_ERROR_);
+			}
+			CHECK(mode_has_been_calculated_);
+			int num_pred = (int)Bp.cols();
+			CHECK((int)Dp.size() == num_pred);
+			sp_mat_t Bt_D_inv = B.transpose() * D_inv;
+			vec_t sigma_inv_mode = mode_ - (*cross_cov) * chol_fact_sigma_woodbury.solve((*cross_cov).transpose() * (Bt_D_inv * (B * mode_)));
+			if (CondObsOnly) {
+				pred_mean = -Bpo * sigma_inv_mode;
+			}
+			else {
+				vec_t Bpo_mode = Bpo * sigma_inv_mode;
+				pred_mean = -Bp.triangularView<Eigen::UpLoType::UnitLower>().solve(Bpo_mode);
+			}
+			pred_mean += cross_cov_pred_ip * chol_fact_sigma_ip.solve((*cross_cov).transpose() * (Bt_D_inv * (B * sigma_inv_mode)));
+			if (calc_pred_cov || calc_pred_var) {
+				den_mat_t chol_ip_cross_cov_ip_pred, chol_ip_cross_cov_pred;
+				sp_mat_rm_t Bpo_rm = sp_mat_rm_t(Bpo);
+				den_mat_t Vecchia_cross_cov((*cross_cov).rows(), (*cross_cov).cols());
+				den_mat_t sigma_ip_inv_sigma_cross_cov_pred = chol_fact_sigma_ip.solve(cross_cov_pred_ip.transpose());//TODO
+				TriangularSolveGivenCholesky<chol_den_mat_t, den_mat_t, den_mat_t, den_mat_t>(chol_fact_sigma_ip,
+					cross_cov_pred_ip.transpose(), chol_ip_cross_cov_pred, false);
+#pragma omp parallel for schedule(static)   
+				for (int i = 0; i < (*cross_cov).cols(); ++i) {
+					Vecchia_cross_cov.col(i) = Bt_D_inv * (B * (*cross_cov).col(i));
+				}
+				den_mat_t cross_cov_PP_Vecchia = chol_ip_cross_cov_pred.transpose() * (chol_ip_cross_cov * Vecchia_cross_cov);
+				den_mat_t cross_cov_pred_obs_pred_inv;
+				den_mat_t B_po_cross_cov(pred_mean.size(), (*cross_cov).cols());
+#pragma omp parallel for schedule(static)   
+				for (int i = 0; i < (*cross_cov).cols(); ++i) {
+					B_po_cross_cov.col(i) = Bpo_rm * (*cross_cov).col(i);
+				}
+				den_mat_t cross_cov_PP_Vecchia_woodbury = chol_fact_sigma_woodbury.solve(cross_cov_PP_Vecchia.transpose());
+				sp_mat_t Bp_inv_Dp;
+				sp_mat_t Bp_inv(Bp.rows(), Bp.cols());
+				if (CondObsOnly) {
+					if (calc_pred_cov) {
+						pred_cov = Dp.asDiagonal();
+					}
+					if (calc_pred_var) {
+						pred_var = Dp;
+					}
+					cross_cov_pred_obs_pred_inv = B_po_cross_cov;
+				}
+				else {
+					TriangularSolve<sp_mat_t, den_mat_t, den_mat_t>(Bp, B_po_cross_cov, cross_cov_pred_obs_pred_inv, false);
+					Bp_inv.setIdentity();
+					TriangularSolve<sp_mat_t, sp_mat_t, sp_mat_t>(Bp, Bp_inv, Bp_inv, false);
+					Bp_inv_Dp = Bp_inv * Dp.asDiagonal();
+					if (calc_pred_cov) {
+						pred_cov = T_mat(Bp_inv_Dp * Bp_inv.transpose());
+					}
+					if (calc_pred_var) {
+						pred_var.resize(pred_mean.size());
+#pragma omp parallel for schedule(static)
+						for (int i = 0; i < pred_var.size(); ++i) {
+							pred_var[i] = (Bp_inv_Dp.row(i)).dot(Bp_inv.row(i));
+						}
+					}
+				}
+				den_mat_t cross_cov_pred_obs_pred_inv_woodbury = chol_fact_sigma_woodbury.solve(cross_cov_pred_obs_pred_inv.transpose());
+				if (calc_pred_cov) {
+					if (pred_mean.size() > 10000) {
+						Log::REInfo("The computational complexity and the storage of the predictive covariance martix heavily depend on the number of prediction location. "
+							"Therefore, if this number is large we recommend only computing the predictive variances ");
+					}
+					T_mat PP_Part;
+					ConvertTo_T_mat_FromDense<T_mat>(cross_cov_pred_ip * sigma_ip_inv_sigma_cross_cov_pred, PP_Part);
+					T_mat PP_V_Part;
+					ConvertTo_T_mat_FromDense<T_mat>(cross_cov_PP_Vecchia * sigma_ip_inv_sigma_cross_cov_pred, PP_V_Part);
+					T_mat V_Part;
+					ConvertTo_T_mat_FromDense<T_mat>(cross_cov_pred_obs_pred_inv * sigma_ip_inv_sigma_cross_cov_pred, V_Part);
+					T_mat V_Part_t;
+					ConvertTo_T_mat_FromDense<T_mat>(sigma_ip_inv_sigma_cross_cov_pred.transpose() * cross_cov_pred_obs_pred_inv.transpose(), V_Part_t);
+					T_mat PP_V_PP_Part;
+					ConvertTo_T_mat_FromDense<T_mat>(cross_cov_pred_obs_pred_inv * cross_cov_PP_Vecchia_woodbury, PP_V_PP_Part);
+					T_mat PP_V_PP_Part_t;
+					ConvertTo_T_mat_FromDense<T_mat>(cross_cov_PP_Vecchia_woodbury.transpose() * cross_cov_pred_obs_pred_inv.transpose(), PP_V_PP_Part_t);
+					T_mat PP_V_V_Part;
+					ConvertTo_T_mat_FromDense<T_mat>(cross_cov_PP_Vecchia * cross_cov_PP_Vecchia_woodbury, PP_V_V_Part);
+					T_mat V_V_Part;
+					ConvertTo_T_mat_FromDense<T_mat>(cross_cov_pred_obs_pred_inv * cross_cov_pred_obs_pred_inv_woodbury, V_V_Part);
+					pred_cov += PP_Part - PP_V_Part + V_Part + V_Part_t - PP_V_PP_Part + PP_V_V_Part - PP_V_PP_Part_t + V_V_Part;
+				}
+				if (calc_pred_var) {
+#pragma omp parallel for schedule(static)
+					for (int i = 0; i < pred_var.size(); ++i) {
+						pred_var[i] += (cross_cov_pred_ip.row(i) - cross_cov_PP_Vecchia.row(i) +
+							2 * cross_cov_pred_obs_pred_inv.row(i)).dot(sigma_ip_inv_sigma_cross_cov_pred.col(i)) +
+							(cross_cov_PP_Vecchia.row(i) - 2 * cross_cov_pred_obs_pred_inv.row(i)).dot(cross_cov_PP_Vecchia_woodbury.col(i)) +
+							(cross_cov_pred_obs_pred_inv.row(i)).dot(cross_cov_pred_obs_pred_inv_woodbury.col(i));
+					}
+				}
+				//Version Simulation
+				if (matrix_inversion_method_ == "iterative") {
+					sp_mat_rm_t Bp_inv_Dp_rm, Bp_inv_rm;
+					sp_mat_rm_t Bp_rm;
+					sp_mat_rm_t Bp_inv_Bpo_rm; //Bp^(-1) * Bpo 
+					if (CondObsOnly) {
+						Bp_inv_Bpo_rm = Bpo_rm; //Bp = Id
+					}
+					else {
+						Bp_rm = sp_mat_rm_t(Bp);
+						Bp_inv_rm = sp_mat_rm_t(Bp_rm.rows(), Bp_rm.cols());
+						Bp_inv_rm.setIdentity();
+						TriangularSolve<sp_mat_rm_t, sp_mat_rm_t, sp_mat_rm_t>(Bp_rm, Bp_inv_rm, Bp_inv_rm, false);
+						Bp_inv_Bpo_rm = Bp_inv_rm * Bpo_rm;
+					}
+					den_mat_t pred_cov_dense;
+					if (calc_pred_cov) {
+						pred_cov_dense = den_mat_t::Zero(num_pred, num_pred);
+					}
+					if (calc_pred_var) {
+						pred_var = vec_t::Zero(num_pred);
+					}
+					vec_t W_diag_sqrt = second_deriv_neg_ll_.cwiseSqrt();
+					sp_mat_rm_t B_t_D_inv_sqrt_rm = B_rm_.transpose() * D_inv_rm_.cwiseSqrt();
+					int num_threads;
+#ifdef _OPENMP
+					num_threads = omp_get_max_threads();
+#else
+					num_threads = 1;
+#endif
+					std::uniform_int_distribution<> unif(0, 2147483646);
+					std::vector<RNG_t> parallel_rngs;
+					for (int ig = 0; ig < num_threads; ++ig) {
+						int seed_local = unif(cg_generator_);
+						parallel_rngs.push_back(RNG_t(seed_local));
+					}
+#pragma omp parallel
+					{
+#pragma omp for nowait
+						for (int i = 0; i < nsim_var_pred_; ++i) {
+							//z_i ~ N(0,I)
+							int thread_nb;
+#ifdef _OPENMP
+							thread_nb = omp_get_thread_num();
+#else
+							thread_nb = 0;
+#endif
+							std::normal_distribution<double> ndist(0.0, 1.0);
+							vec_t rand_vec_pred_I_1(dim_mode_), rand_vec_pred_I_2(dim_mode_);
+							for (int j = 0; j < dim_mode_; j++) {
+								rand_vec_pred_I_1(j) = ndist(parallel_rngs[thread_nb]);
+								rand_vec_pred_I_2(j) = ndist(parallel_rngs[thread_nb]);
+							}
+							vec_t rand_vec_pred_I_3((*cross_cov).cols());
+							for (int j = 0; j < (*cross_cov).cols(); j++) {
+								rand_vec_pred_I_3(j) = ndist(parallel_rngs[thread_nb]);
+							}
+							//z_i ~ N(0,Sigma)
+							vec_t Sigma_sqrt_rand_vec = chol_ip_cross_cov.transpose() * rand_vec_pred_I_3;
+							vec_t D_sqrt = D_inv_rm_.diagonal().cwiseInverse().cwiseSqrt();
+							Sigma_sqrt_rand_vec += B_rm_.triangularView<Eigen::UpLoType::UnitLower>().solve(D_sqrt.cwiseProduct(rand_vec_pred_I_1));
+
+							//z_i ~ N(0,Sigma^{-1})
+							vec_t Bt_D_inv_Sigma_sqrt_rand_vec = B_t_D_inv_rm_ * B_rm_ * Sigma_sqrt_rand_vec;
+							vec_t Sigma_inv_Sigma_sqrt_rand_vec = Bt_D_inv_Sigma_sqrt_rand_vec - B_t_D_inv_rm_ * (B_rm_ * ((*cross_cov) * chol_fact_sigma_woodbury.solve((*cross_cov).transpose() * Bt_D_inv_Sigma_sqrt_rand_vec)));
+							//z_i ~ N(0,(Sigma^{-1} + W))
+							vec_t rand_vec_pred_SigmaI_plus_W = Sigma_inv_Sigma_sqrt_rand_vec + W_diag_sqrt.cwiseProduct(rand_vec_pred_I_2);
+							vec_t rand_vec_pred_SigmaI_plus_W_inv(dim_mode_);
+							//z_i ~ N(0,(Sigma^{-1} + W)^{-1})
+							bool has_NA_or_Inf = false;
+							if (cg_preconditioner_type_ == "Bt_Sigma_inv_plus_W_B" || cg_preconditioner_type_ == "none") {
+								vec_t W_D_inv = (second_deriv_neg_ll_ + D_inv_rm_.diagonal());
+								vec_t W_D_inv_inv = W_D_inv.cwiseInverse();
+								CGFSVALaplaceVec(second_deriv_neg_ll_, B_rm_, D_inv_rm_, B_t_D_inv_rm_, chol_fact_sigma_woodbury, cross_cov, W_D_inv_inv,
+									chol_fact_sigma_woodbury_woodbury_, rand_vec_pred_SigmaI_plus_W, rand_vec_pred_SigmaI_plus_W_inv, has_NA_or_Inf, cg_max_num_it_, 
+									0, cg_delta_conv_pred_, ZERO_RHS_CG_THRESHOLD, cg_preconditioner_type_);
+							}
+							else if (cg_preconditioner_type_ == "Sigma_plus_W_inv_low_rank") {
+								vec_t rand_vec_pred_SigmaI_plus_W_inv_interim(dim_mode_);
+								vec_t rhs_part, rhs_part1, rhs_part2;
+								vec_t second_deriv_neg_ll_inv(dim_mode_);
+								second_deriv_neg_ll_inv.array() = second_deriv_neg_ll_.array().inverse();
+								rhs_part1 = B_rm_.transpose().triangularView<Eigen::UpLoType::UnitUpper>().solve(rand_vec_pred_SigmaI_plus_W);
+								rhs_part = D_inv_B_rm_.triangularView<Eigen::UpLoType::Lower>().solve(rhs_part1);
+								rhs_part2 = (*cross_cov) * (chol_fact_sigma_ip.solve((*cross_cov).transpose() * rand_vec_pred_SigmaI_plus_W));
+								rand_vec_pred_SigmaI_plus_W = rhs_part + rhs_part2;
+								CGFSVALowRankLaplaceVec(second_deriv_neg_ll_inv, D_inv_B_rm_, B_rm_, chol_fact_woodbury_preconditioner_,
+									chol_ip_cross_cov, cross_cov, diagonal_approx_inv_preconditioner_, rand_vec_pred_SigmaI_plus_W, rand_vec_pred_SigmaI_plus_W_inv_interim, has_NA_or_Inf,
+									cg_max_num_it_, 0, cg_delta_conv_pred_, ZERO_RHS_CG_THRESHOLD, cg_preconditioner_type_);
+								rand_vec_pred_SigmaI_plus_W_inv = second_deriv_neg_ll_inv.asDiagonal() * rand_vec_pred_SigmaI_plus_W_inv_interim;
+							}
+							if (has_NA_or_Inf) {
+								Log::REDebug(CG_NA_OR_INF_WARNING_);
+							}
+							vec_t B_t_D_inv_B_vec = B_t_D_inv_rm_ * (B_rm_ * rand_vec_pred_SigmaI_plus_W_inv);
+							vec_t sigma_woodbury_vec = (*cross_cov) * chol_fact_sigma_woodbury.solve((*cross_cov).transpose()* B_t_D_inv_B_vec);
+							//z_i ~ N(0, (Sigma_pm Sigma_ip^-1 Sigma_mn - B_p^-1 B_po (B_o^T D_o^-1 B_o)^-1) Sigma^{-1} (Sigma^{-1} + W)^{-1} Sigma^{-1} (Sigma_nm Sigma_ip^-1 Sigma_mp - (B_o^T D_o^-1 B_o)^-1 B_po^T B_p^-1 ))
+							vec_t sigma_pred_sigma_inv_vec = cross_cov_pred_ip * chol_fact_sigma_ip.solve((*cross_cov).transpose() * (B_t_D_inv_B_vec - B_t_D_inv_rm_ * (B_rm_ * sigma_woodbury_vec)));
+							vec_t sigma_vecchia_vec = Bp_inv_Bpo_rm * (rand_vec_pred_SigmaI_plus_W_inv - sigma_woodbury_vec);
+							vec_t rand_vec_pred = sigma_pred_sigma_inv_vec - sigma_vecchia_vec;
+							if (calc_pred_cov) {
+								den_mat_t pred_cov_private = rand_vec_pred * rand_vec_pred.transpose();
+#pragma omp critical
+								{
+									pred_cov_dense += pred_cov_private;
+								}
+							}
+							if (calc_pred_var) {
+								vec_t pred_var_private = rand_vec_pred.cwiseProduct(rand_vec_pred);
+#pragma omp critical
+								{
+									pred_var += pred_var_private;
+								}
+							}
+						}
+
+					}
+					if (calc_pred_cov) {
+						pred_cov_dense /= nsim_var_pred_;
+						if (CondObsOnly) {
+							pred_cov_dense.diagonal().array() += Dp.array();
+						}
+						else {
+							pred_cov_dense += Bp_inv_Dp_rm * Bp_inv_rm.transpose();
+						}
+						ConvertTo_T_mat_FromDense<T_mat>(pred_cov_dense, pred_cov);
+					}
+					if (calc_pred_var) {
+						pred_var /= nsim_var_pred_;
+						if (CondObsOnly) {
+							pred_var += Dp;
+						}
+						else {
+							pred_var += Bp_inv_Dp_rm.cwiseProduct(Bp_inv_rm) * vec_t::Ones(num_pred);
+						}
+#pragma omp parallel for schedule(static)
+						for (int i = 0; i < num_pred; ++i) {
+							pred_var[i] += (cross_cov_pred_ip.row(i) - cross_cov_PP_Vecchia.row(i) +
+								2 * cross_cov_pred_obs_pred_inv.row(i)).dot(sigma_ip_inv_sigma_cross_cov_pred.col(i)) +
+								(cross_cov_PP_Vecchia.row(i) - 2 * cross_cov_pred_obs_pred_inv.row(i)).dot(cross_cov_PP_Vecchia_woodbury.col(i)) +
+								(cross_cov_pred_obs_pred_inv.row(i)).dot(cross_cov_pred_obs_pred_inv_woodbury.col(i));
+						}
+					}
+				} //end iterative methods using simulation
+				else {//using Cholesky decomposition
+					sp_mat_t Maux; //Maux = L\(Bpo^T * Bp^-1), L = Chol(Sigma^-1 + W)
+					if (CondObsOnly) {
+						Maux = Bpo.transpose();//Bp = Id
+					}
+					else {
+						Bp_inv = sp_mat_t(Bp.rows(), Bp.cols());
+						Bp_inv.setIdentity();
+						TriangularSolve<sp_mat_t, sp_mat_t, sp_mat_t>(Bp, Bp_inv, Bp_inv, false);
+						//Bp.triangularView<Eigen::UpLoType::UnitLower>().solveInPlace(Bp_inv);//much slower
+						Maux = Bpo.transpose() * Bp_inv.transpose();
+						Bp_inv_Dp = Bp_inv * Dp.asDiagonal();
+					}
+					TriangularSolveGivenCholesky<chol_sp_mat_t, sp_mat_t, sp_mat_t, sp_mat_t>(chol_fact_SigmaI_plus_ZtWZ_vecchia_, Maux, Maux, false);
+					if (calc_pred_cov) {
+						if (CondObsOnly) {
+							pred_cov = Maux.transpose() * Maux;
+							pred_cov.diagonal().array() += Dp.array();
+						}
+						else {
+							pred_cov = Bp_inv_Dp * Bp_inv.transpose() + Maux.transpose() * Maux;
+						}
+						T_mat PP_Part;
+						TriangularSolveGivenCholesky<chol_den_mat_t, den_mat_t, den_mat_t, den_mat_t>(chol_fact_sigma_ip, cross_cov_pred_ip.transpose(), chol_ip_cross_cov_ip_pred, false);
+						ConvertTo_T_mat_FromDense<T_mat>(chol_ip_cross_cov_ip_pred.transpose()* chol_ip_cross_cov_ip_pred, PP_Part);
+						pred_cov += PP_Part;
+					}
+					if (calc_pred_var) {
+						pred_var = vec_t(num_pred);
+						Maux = Maux.cwiseProduct(Maux);
+						if (CondObsOnly) {
+#pragma omp parallel for schedule(static)
+							for (int i = 0; i < num_pred; ++i) {
+								pred_var[i] = Dp[i] + Maux.col(i).sum();
+							}
+						}
+						else {
+#pragma omp parallel for schedule(static)
+							for (int i = 0; i < num_pred; ++i) {
+								pred_var[i] = (Bp_inv_Dp.row(i)).dot(Bp_inv.row(i)) + Maux.col(i).sum();
+							}
+						}
+					}
+				}
+			}//end calc_pred_cov || calc_pred_var
+		}//end PredictLaplaceApproxFSVA
 
 		/*!
 		* \brief Make predictions for the (latent) random effects when using the Laplace approximation.
@@ -3513,13 +5118,13 @@ namespace GPBoost {
 					FITC_correction_diag_inv_cross_cov = FITC_correction_diag_inv * (*cross_cov);
 					M_aux_1 += FITC_correction_diag_inv_cross_cov.transpose();
 				}
-				den_mat_t woodburry_part_sqrt;
-				TriangularSolveGivenCholesky<chol_den_mat_t, den_mat_t, den_mat_t, den_mat_t>(chol_fact_dense_Newton_, M_aux_1, woodburry_part_sqrt, false);
+				den_mat_t woodbury_part_sqrt;
+				TriangularSolveGivenCholesky<chol_den_mat_t, den_mat_t, den_mat_t, den_mat_t>(chol_fact_dense_Newton_, M_aux_1, woodbury_part_sqrt, false);
 				if (calc_pred_cov) {
 					T_mat Maux;
 					ConvertTo_T_mat_FromDense<T_mat>(sigma_ip_inv_cross_cov_pred_T.transpose() * M_aux_1, Maux);
 					pred_cov -= Maux;
-					ConvertTo_T_mat_FromDense<T_mat>(woodburry_part_sqrt.transpose() * woodburry_part_sqrt, Maux);
+					ConvertTo_T_mat_FromDense<T_mat>(woodbury_part_sqrt.transpose() * woodbury_part_sqrt, Maux);
 					pred_cov += Maux;
 					if (has_fitc_correction) {
 						ConvertTo_T_mat_FromDense<T_mat>(FITC_correction_diag_inv_cross_cov * sigma_ip_inv_cross_cov_pred_T + FITC_correction_diag_inv * FITC_correction.transpose(), Maux);
@@ -3529,7 +5134,7 @@ namespace GPBoost {
 				if (calc_pred_var) {
 #pragma omp parallel for schedule(static)
 					for (int i = 0; i < (int)pred_mean.size(); ++i) {
-						pred_var[i] -= M_aux_1.col(i).dot(sigma_ip_inv_cross_cov_pred_T.col(i)) - woodburry_part_sqrt.col(i).array().square().sum();
+						pred_var[i] -= M_aux_1.col(i).dot(sigma_ip_inv_cross_cov_pred_T.col(i)) - woodbury_part_sqrt.col(i).array().square().sum();
 					}
 					if (has_fitc_correction) {
 #pragma omp parallel for schedule(static)
@@ -3888,6 +5493,62 @@ namespace GPBoost {
 		* \brief Calculate log|Sigma W + I| using stochastic trace estimation and variance reduction.
 		* \param num_data Number of data points
 		* \param cg_max_num_it_tridiag Maximal number of iterations for conjugate gradient algorithm when being run as Lanczos algorithm for tridiagonalization
+		* \param chol_fact_sigma_woodbury Cholesky factor of 'sigma_ip + sigma_cross_cov_T * sigma_residual^-1 * sigma_cross_cov'
+		* \param chol_fact_sigma_ip Cholesky factor of 'sigma_ip'
+		* \param cross_cov Cross-covariance matrix between inducing points and all data points
+		* \param chol_fact_sigma_woodbury_woodbury Cholesky factor of 'sigma_ip - sigma_cross_cov_T * B_t * D_inv * B * (W + D_inv)^-1 * B * D_inv * B * sigma_cross_cov'
+		* \param W_D_inv Vector (W + D^-1)
+		* \param[out] has_NA_or_Inf Is set to TRUE if NA or Inf occured in the conjugate gradient algorithm
+		* \param[out] log_det_Sigma_W_plus_I Solution for log|Sigma W + I|
+		*/
+		void CalcLogDetStochFSVA(const data_size_t& num_data,
+			const int& cg_max_num_it_tridiag,
+			const chol_den_mat_t& chol_fact_sigma_woodbury,
+			const den_mat_t& chol_ip_cross_cov,
+			const chol_den_mat_t& chol_fact_sigma_ip,
+			const std::shared_ptr<den_mat_t> cross_cov,
+			const vec_t& W_D_inv_inv,
+			const chol_den_mat_t& chol_fact_sigma_woodbury_woodbury,
+			const vec_t& W_D_inv,
+			bool& has_NA_or_Inf,
+			double& log_det_Sigma_W_plus_I) {
+			log_det_Sigma_W_plus_I = 0.;
+			CHECK(rand_vec_trace_I_.cols() == num_rand_vec_trace_);
+			std::vector<vec_t> Tdiags_W_SigmaI(num_rand_vec_trace_, vec_t(cg_max_num_it_tridiag));
+			std::vector<vec_t> Tsubdiags_W_SigmaI(num_rand_vec_trace_, vec_t(cg_max_num_it_tridiag - 1));
+			if (cg_preconditioner_type_ == "Sigma_plus_W_inv_low_rank") {
+				CGTridiagFSVALowRankLaplace(second_deriv_neg_ll_.cwiseInverse(), D_inv_B_rm_, B_rm_, chol_fact_woodbury_preconditioner_,
+					chol_ip_cross_cov, cross_cov, diagonal_approx_inv_preconditioner_, rand_vec_trace_I_, Tdiags_W_SigmaI, Tsubdiags_W_SigmaI, SigmaI_plus_W_inv_Z_,
+					has_NA_or_Inf, num_data, num_rand_vec_trace_, cg_max_num_it_tridiag, cg_delta_conv_, cg_preconditioner_type_);
+			}
+			else {
+				CGTridiagFSVALaplace(second_deriv_neg_ll_, B_rm_, D_inv_rm_, B_t_D_inv_rm_, chol_fact_sigma_woodbury, cross_cov, W_D_inv_inv, chol_fact_sigma_woodbury_woodbury,
+					rand_vec_trace_I_, Tdiags_W_SigmaI, Tsubdiags_W_SigmaI, SigmaI_plus_W_inv_Z_, has_NA_or_Inf, num_data, num_rand_vec_trace_, cg_max_num_it_tridiag, cg_delta_conv_,
+					cg_preconditioner_type_);
+			}
+			LogDetStochTridiag(Tdiags_W_SigmaI, Tsubdiags_W_SigmaI, log_det_Sigma_W_plus_I, num_data, num_rand_vec_trace_);
+			if (cg_preconditioner_type_ == "Sigma_plus_W_inv_low_rank") {
+				log_det_Sigma_W_plus_I -= 2. * (((den_mat_t)chol_fact_sigma_ip.matrixL()).diagonal().array().log().sum());
+				log_det_Sigma_W_plus_I += second_deriv_neg_ll_.array().log().sum();
+				log_det_Sigma_W_plus_I += 2. * ((den_mat_t)chol_fact_woodbury_preconditioner_.matrixL()).diagonal().array().log().sum();
+				log_det_Sigma_W_plus_I += diagonal_approx_preconditioner_.array().log().sum();
+			}
+			else {
+				log_det_Sigma_W_plus_I -= 2. * (((den_mat_t)chol_fact_sigma_ip.matrixL()).diagonal().array().log().sum()) + D_inv_rm_.diagonal().array().log().sum();
+				if (cg_preconditioner_type_ == "Bt_Sigma_inv_plus_W_B") {
+					log_det_Sigma_W_plus_I += W_D_inv.array().log().sum() + 2. * ((den_mat_t)chol_fact_sigma_woodbury_woodbury.matrixL()).diagonal().array().log().sum();
+				}
+				else {
+					log_det_Sigma_W_plus_I += 2. * ((den_mat_t)chol_fact_sigma_woodbury.matrixL()).diagonal().array().log().sum();
+				}
+			}
+			Log::REInfo("logdet %g", log_det_Sigma_W_plus_I);
+		}//end CalcLogDetStochFSVA
+
+		/*!
+		* \brief Calculate log|Sigma W + I| using stochastic trace estimation and variance reduction.
+		* \param num_data Number of data points
+		* \param cg_max_num_it_tridiag Maximal number of iterations for conjugate gradient algorithm when being run as Lanczos algorithm for tridiagonalization
 		* \param I_k_plus_Sigma_L_kt_W_Sigma_L_k Preconditioner "piv_chol_on_Sigma": I_k + Sigma_L_k^T W Sigma_L_k
 		* \param SigmaI Preconditioner "zero_infill_incomplete_cholesky": Column-major matrix containing B^T D^(-1) B
 		* \param SigmaI_plus_W Preconditioner "zero_infill_incomplete_cholesky": Column-major matrix containing B^T D^(-1) B + W (W not yet updated)
@@ -3980,7 +5641,7 @@ namespace GPBoost {
 			}
 		}//end CalcLogDetStoch
 
-		/*! 
+		/*!
 		* \brief Calculate dlog|Sigma W + I|/db_i for all i in 1, ..., n using stochastic trace estimation and variance reduction.
 		* \param third_deriv Third derivative of the log-likelihood with respect to the mode.
 		* \param num_data Number of data points
@@ -4036,6 +5697,9 @@ namespace GPBoost {
 				//optimal c
 				CalcOptimalCVectorized(Z_WI_plus_Sigma_inv_WI_deriv_PI_Z, Z_PI_P_deriv_PI_Z, tr_WI_plus_Sigma_inv_WI_deriv, tr_PI_P_deriv_vec, c_opt);
 				d_log_det_Sigma_W_plus_I_d_mode += c_opt.cwiseProduct(tr_Sigma_Lk_I_k_plus_Sigma_L_kt_W_Sigma_L_k_inv_Sigma_Lkt_W_deriv - tr_WI_W_deriv) - c_opt.cwiseProduct(tr_PI_P_deriv_vec);
+				Log::REInfo("c_mean %g", c_opt.mean());
+				Log::REInfo("c_max %g", c_opt.maxCoeff());
+				Log::REInfo("c_min %g", c_opt.minCoeff());
 			}
 			else if (cg_preconditioner_type_ == "Sigma_inv_plus_BtWB" || cg_preconditioner_type_ == "zero_infill_incomplete_cholesky") {
 				//P^(-1) Z
@@ -4081,6 +5745,12 @@ namespace GPBoost {
 					//optimal c
 					CalcOptimalCVectorized(Z_SigmaI_plus_W_inv_W_deriv_PI_Z, Z_PI_P_deriv_PI_Z, tr_SigmaI_plus_W_inv_W_deriv, tr_PI_P_deriv_vec, c_opt);
 					d_log_det_Sigma_W_plus_I_d_mode += c_opt.cwiseProduct(tr_D_inv_plus_W_inv_W_deriv) - c_opt.cwiseProduct(tr_PI_P_deriv_vec);
+					Log::REInfo("c_mean %g", c_opt.mean());
+					Log::REInfo("c_max %g", c_opt.maxCoeff());
+					Log::REInfo("c_min %g", c_opt.minCoeff());
+					Log::REInfo("mean1 %g", tr_D_inv_plus_W_inv_W_deriv.mean());
+					Log::REInfo("mean1 %g", tr_PI_P_deriv_vec.mean());
+					Log::REInfo("mean1 %g", Z_SigmaI_plus_W_inv_W_deriv_PI_Z.mean());
 				}
 			}
 			else {
@@ -4403,6 +6073,8 @@ namespace GPBoost {
 		den_mat_t rand_vec_trace_I_;
 		/*! Matrix of random vectors (r_1, r_2, r_3, ...) with Cov(r_i) = I, r_i is of dimension piv_chol_rank_, and t = num_rand_vec_trace_. This is used only if cg_preconditioner_type_ == "piv_chol_on_Sigma" */
 		den_mat_t rand_vec_trace_I2_;
+		/*! Matrix of random vectors (r_1, r_2, r_3, ...) with Cov(r_i) = I, r_i is of dimension piv_chol_rank_, and t = num_rand_vec_trace_. This is used only if cg_preconditioner_type_ == "piv_chol_on_Sigma" */
+		den_mat_t rand_vec_trace_I3_;
 		/*! Matrix Z of random vectors (z_1, ..., z_t) with Cov(z_i) = P (P being the preconditioner matrix), z_i is of dimension num_data, and t = num_rand_vec_trace_ */
 		den_mat_t rand_vec_trace_P_;
 		/*! Matrix to store (Sigma^(-1) + W)^(-1) (z_1, ..., z_t) calculated in CGTridiagVecchiaLaplace() for later use in the stochastic trace approximation when calculating the gradient*/
@@ -4419,6 +6091,15 @@ namespace GPBoost {
 		sp_mat_rm_t D_inv_plus_W_B_rm_;
 		/*! \brief zero_infill_incomplete_cholesky (P = L^T L): sparse cholesky factor L of matrix L^T L =  B^T D^(-1) B + W*/
 		sp_mat_rm_t L_SigmaI_plus_W_rm_;
+
+		den_mat_t sigma_woodbury_woodbury_;
+		chol_den_mat_t chol_fact_sigma_woodbury_woodbury_;
+		den_mat_t D_inv_B_cross_cov_;
+		sp_mat_rm_t D_inv_B_rm_;
+		vec_t diagonal_approx_preconditioner_;
+		vec_t diagonal_approx_inv_preconditioner_; 
+		chol_den_mat_t chol_fact_woodbury_preconditioner_;
+		sp_mat_rm_t B_rm_inv_D_sqrt_;
 
 		/*! \brief Order of the Gauss-Hermite quadrature */
 		int order_GH_ = 30;

@@ -129,13 +129,14 @@ namespace GPBoost {
 		int k,
 		RNG_t& gen,
 		den_mat_t& means,
-		int max_it) {
+		int max_it,
+		vec_t& clusters) {
 		// Initialization
 		random_plusplus(data, k, gen, means);
 		den_mat_t old_means(k, data.cols());
 		old_means.setZero();
 		den_mat_t old_old_means = old_means;
-		vec_t clusters(data.rows());
+		clusters.resize(data.rows());
 		vec_t indices_interim(k);
 		indices_interim.setZero();
 		// Calculate new means until convergence is reached or we hit the maximum iteration count

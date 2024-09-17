@@ -13,6 +13,8 @@
 #include <GPBoost/type_defs.h>
 #include <algorithm>    // std::max, std::sort
 #include <numeric>      // std::iota
+#include <vector>
+#include <iterator>
 
 namespace GPBoost {
 
@@ -24,6 +26,12 @@ namespace GPBoost {
 
 	/*! \brief Small number that is added in some cases to covariance matrices to make inversion numerically stable */
 	const double EPSILON_ADD_COVARIANCE_STABLE = 1e-10;
+
+	/*! \brief Number by which the diagonal of inducing points matrix in the FITC approximation is multiplied with (increased) to make inversions numerically stable */
+	const double EPSILON_MULT_DIAG_COVARIANCE_IP_FITC_STABLE = 1. + 1e-8;
+
+	/*! \brief Number by which the diagonal of inducing points matrix in the FITC approximation is multiplied with (increased) to make inversions numerically stable */
+	const double EPSILON_MULT_DIAG_COVARIANCE_IP_FITC_MORE_STABLE = 1. + 1e-6;
 
 	/*! \brief Termination criterion for low-rank pivoted Cholesky decomposition */
 	const double PIV_CHOL_STOP_TOL = 1e-6;
@@ -66,6 +74,42 @@ namespace GPBoost {
 			return -INFINITY;
 		}
 	};
+
+	template<class Value, class InputIt1, class InputIt2, class OutputIt>
+	OutputIt my_intersection(InputIt1 first1, InputIt1 last1,
+		InputIt2 first2, InputIt2 last2,
+		OutputIt d_first, OutputIt d_second, OutputIt remaining, OutputIt remaining_ind)
+	{
+		auto start1 = first1;
+		auto start2 = first2;
+
+		while (first1 != last1 && first2 != last2) {
+			if (*first1 < *first2) {
+				first1++;
+				continue;
+			}
+
+			if (*first2 == *first1) {
+				*d_first++ = std::distance(start1, first1);
+				*d_second++ = std::distance(start2, first2);
+				*first1++;
+			}
+			else {
+				*remaining++ = *first2;
+				*remaining_ind++ = std::distance(start2, first2);
+			}
+
+			first2++;
+		}
+
+		while (first2 != last2) {
+			*remaining++ = *first2;
+			*remaining_ind++ = std::distance(start2, first2); 
+			first2++;
+		}
+
+		return d_first;
+	}
 
 	/*!
 	* \brief Finds the sorting index of vector v and saves it in idx

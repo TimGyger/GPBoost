@@ -159,7 +159,8 @@ namespace GPBoost {
 					}
 				}
 				else {
-					Log::REFatal("'ScaleCoordinates' is called for a model for which this function is not implemented ");
+					coords_scaled = coords;
+					//Log::REFatal("'ScaleCoordinates' is called for a model for which this function is not implemented ");
 				}
 		}//end ScaleCoordinates
 

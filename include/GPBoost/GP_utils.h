@@ -499,7 +499,7 @@ namespace GPBoost {
 	/*
 	Calculate means based on data points and their cluster assignments.
 	* \param data data coordinates
-	* \param  clusters index of the mean each data point is closest to
+	* \param[out] clusters index of the mean each data point is closest to
 	* \param[out] means data cluster means that determine the inducing points
 	* \param[out] indices indices of closest data points to means
 	*/
@@ -516,12 +516,14 @@ namespace GPBoost {
 	* \param gen RNG
 	* \param[out] means data cluster means that determine the inducing points
 	* \param[out] max_int maximal number of iterations
+	* \param[out] clusters index of the mean each data point is closest to
 	*/
 	void kmeans_plusplus(const den_mat_t& data,
 		int k,
 		RNG_t& gen,
 		den_mat_t& means,
-		int max_it);
+		int max_it,
+		vec_t& clusters);
 
 	/*
 	Determines indices of data which is inside a ball with given radius around given point
