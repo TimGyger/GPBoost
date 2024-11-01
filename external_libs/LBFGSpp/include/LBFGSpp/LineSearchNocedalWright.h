@@ -28,7 +28,7 @@ private:
     // the function, and the fitted quadratic function is used to
     // estimate the minimum
     static Scalar quad_interp(const Scalar& step_lo, const Scalar& step_hi,
-        const Scalar& fx_lo, const Scalar& fx_hi, const Scalar& dg_lo)
+                              const Scalar& fx_lo, const Scalar& fx_hi, const Scalar& dg_lo)
     {
         using std::abs;
 
@@ -159,10 +159,8 @@ public:
             // Test the curvature condition
             if (std::abs(dg) <= test_curv)
             {
-                f(x, grad, false, true);//calculate gradient
                 return;  // Case (4)
             }
-                
 
             step_hi = step_lo;
             fx_hi = fx_lo;
@@ -192,7 +190,6 @@ public:
                 // But we need to move {x, grad}_lo back before returning
                 x.swap(x_lo);
                 grad.swap(grad_lo);
-                f(x, grad, false, true);//calculate gradient
                 return;
             }
 
@@ -272,6 +269,7 @@ public:
                 if (step_lo <= Scalar(0))
                 {
                     x.noalias() = xp;
+                    f.ResetProfiledOutVariablesToLag1();
                     fx = fx_init;
                     step = 0.;
                     Log::REDebug("GPModel lbfgs: the line search routine reached the maximum number of iterations");
@@ -286,7 +284,6 @@ public:
                     x.swap(x_lo);
                     grad.swap(grad_lo);
                 }
-                f(x, grad, false, true);//calculate gradient
                 return;
             }
         }

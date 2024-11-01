@@ -1,4 +1,5 @@
 // Copyright (C) 2020-2023 Yixuan Qiu <yixuan.qiu@cos.name>
+// Modified work Copyright (c) 2024 Fabio Sigrist. All rights reserved.
 // Under MIT license
 
 #ifndef LBFGSPP_BFGS_MAT_H
@@ -31,19 +32,19 @@ private:
     using RefConstVec = Eigen::Ref<const Vector>;
     using IndexSet = std::vector<int>;
 
-    int m_m;         // Maximum number of correction vectors
-    Scalar m_theta;  // theta * I is the initial approximation to the Hessian matrix
-    Matrix m_s;      // History of the s vectors
-    Matrix m_y;      // History of the y vectors
-    Vector m_ys;     // History of the s'y values
-    Vector m_alpha;  // Temporary values used in computing H * v
-    int m_ncorr;     // Number of correction vectors in the history, m_ncorr <= m
-    int m_ptr;       // A Pointer to locate the most recent history, 1 <= m_ptr <= m
-                     // Details: s and y vectors are stored in cyclic order.
-                     //          For example, if the current s-vector is stored in m_s[, m-1],
-                     //          then in the next iteration m_s[, 0] will be overwritten.
-                     //          m_s[, m_ptr-1] points to the most recent history,
-                     //          and m_s[, m_ptr % m] points to the most distant one.
+    int m_m;          // Maximum number of correction vectors
+    Scalar m_theta;   // theta * I is the initial approximation to the Hessian matrix
+    Matrix m_s;       // History of the s vectors
+    Matrix m_y;       // History of the y vectors
+    Vector m_ys;      // History of the s'y values
+    Vector m_alpha;   // Temporary values used in computing H * v
+    int m_ncorr = 0;  // Number of correction vectors in the history, m_ncorr <= m
+    int m_ptr;        // A Pointer to locate the most recent history, 1 <= m_ptr <= m
+                      // Details: s and y vectors are stored in cyclic order.
+                      //          For example, if the current s-vector is stored in m_s[, m-1],
+                      //          then in the next iteration m_s[, 0] will be overwritten.
+                      //          m_s[, m_ptr-1] points to the most recent history,
+                      //          and m_s[, m_ptr % m] points to the most distant one.
 
     //========== The following members are only used in L-BFGS-B algorithm ==========//
     Matrix m_permMinv;             // Permutated M inverse
@@ -52,6 +53,16 @@ private:
 public:
     // Constructor
     BFGSMat() {}
+
+    int get_dim_param()
+    {
+        return ((int) m_s.rows());
+    }
+
+    int get_m_ncorr()
+    {
+        return (m_ncorr);
+    }
 
     // Reset internal variables
     // n: dimension of the vector to be optimized

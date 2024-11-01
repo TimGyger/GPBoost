@@ -91,7 +91,7 @@ namespace GPBoost {
 				return;
 			}
 			if (r_norm < delta_conv) {
-				Log::REInfo("Number CG iterations: %i", j + 1);
+				//Log::REInfo("Number CG iterations: %i", j + 1);
 				return;
 			}
 
@@ -200,7 +200,7 @@ namespace GPBoost {
 			}
 			if (mean_R_norm < delta_conv) {
 				early_stop_alg = true;
-				Log::REInfo("Number CG-Tridiag iterations: %i", j + 1);
+				//Log::REInfo("Number CG-Tridiag iterations: %i", j + 1);
 			}
 
 			Z_old = Z;
@@ -326,7 +326,7 @@ namespace GPBoost {
 				return;
 			}
 			if (r_norm < delta_conv) {
-				Log::REInfo("Number CG iterations: %i", j + 1);
+				//Log::REInfo("Number CG iterations: %i", j + 1);
 				return;
 			}
 
@@ -450,7 +450,7 @@ namespace GPBoost {
 			}
 			if (mean_R_norm < delta_conv) {
 				early_stop_alg = true;
-				Log::REInfo("Number CG-Tridiag iterations: %i", j + 1);
+				//Log::REInfo("Number CG-Tridiag iterations: %i", j + 1);
 			}
 
 			Z_old = Z;

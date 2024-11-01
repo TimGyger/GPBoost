@@ -19,30 +19,30 @@
   ##
   ################################################################################*/
 
-/*
- * BFGS method for quasi-Newton-based non-linear optimization
- */
+  /*
+   * BFGS method for quasi-Newton-based non-linear optimization
+   */
 
 #ifndef _optim_bfgs_HPP
 #define _optim_bfgs_HPP
 
-/**
- * @brief The Broyden–Fletcher–Goldfarb–Shanno (BFGS) Quasi-Newton Optimization Algorithm
- *
- * @param init_out_vals a column vector of initial values, which will be replaced by the solution upon successful completion of the optimization algorithm.
- * @param opt_objfn the function to be minimized, taking three arguments:
- *   - \c vals_inp a vector of inputs;
- *   - \c grad_out a vector to store the gradient; and
- *   - \c opt_data additional data passed to the user-provided function.
- * @param opt_data additional data passed to the user-provided function.
- *
- * @return a boolean value indicating successful completion of the optimization algorithm.
- */
+   /**
+    * @brief The Broyden–Fletcher–Goldfarb–Shanno (BFGS) Quasi-Newton Optimization Algorithm
+    *
+    * @param init_out_vals a column vector of initial values, which will be replaced by the solution upon successful completion of the optimization algorithm.
+    * @param opt_objfn the function to be minimized, taking three arguments:
+    *   - \c vals_inp a vector of inputs;
+    *   - \c grad_out a vector to store the gradient; and
+    *   - \c opt_data additional data passed to the user-provided function.
+    * @param opt_data additional data passed to the user-provided function.
+    *
+    * @return a boolean value indicating successful completion of the optimization algorithm.
+    */
 
-bool 
-bfgs(Vec_t& init_out_vals, 
-     std::function<double (const Vec_t& vals_inp, Vec_t* grad_out, void* opt_data)> opt_objfn, 
-     void* opt_data);
+bool
+bfgs(Vec_t& init_out_vals,
+    std::function<double(const Vec_t& vals_inp, Vec_t* grad_out, void* opt_data)> opt_objfn,
+    void* opt_data);
 
 /**
  * @brief The Broyden–Fletcher–Goldfarb–Shanno (BFGS) Quasi-Newton Optimization Algorithm
@@ -58,11 +58,11 @@ bfgs(Vec_t& init_out_vals,
  * @return a boolean value indicating successful completion of the optimization algorithm.
  */
 
-bool 
-bfgs(Vec_t& init_out_vals, 
-     std::function<double (const Vec_t& vals_inp, Vec_t* grad_out, void* opt_data)> opt_objfn, 
-     void* opt_data, 
-     algo_settings_t& settings);
+bool
+bfgs(Vec_t& init_out_vals,
+    std::function<double(const Vec_t& vals_inp, Vec_t* grad_out, void* opt_data)> opt_objfn,
+    void* opt_data,
+    algo_settings_t& settings);
 
 //
 // internal
@@ -70,11 +70,11 @@ bfgs(Vec_t& init_out_vals,
 namespace internal
 {
 
-bool 
-bfgs_impl(Vec_t& init_out_vals, 
-         std::function<double (const Vec_t& vals_inp, Vec_t* grad_out, void* opt_data)> opt_objfn, 
-         void* opt_data, 
-         algo_settings_t* settings_inp);
+    bool
+        bfgs_impl(Vec_t& init_out_vals,
+            std::function<double(const Vec_t& vals_inp, Vec_t* grad_out, void* opt_data)> opt_objfn,
+            void* opt_data,
+            algo_settings_t* settings_inp);
 
 }
 
@@ -83,9 +83,9 @@ bfgs_impl(Vec_t& init_out_vals,
 inline
 bool
 internal::bfgs_impl(
-    Vec_t& init_out_vals, 
-    std::function<double (const Vec_t& vals_inp, Vec_t* grad_out, void* opt_data)> opt_objfn, 
-    void* opt_data, 
+    Vec_t& init_out_vals,
+    std::function<double(const Vec_t& vals_inp, Vec_t* grad_out, void* opt_data)> opt_objfn,
+    void* opt_data,
     algo_settings_t* settings_inp)
 {
     // notation: 'p' stands for '+1'.
@@ -105,7 +105,7 @@ internal::bfgs_impl(
 
     //ChangedForGPBoost
     //const int print_level = settings.print_level;
-    
+
     const uint_t conv_failure_switch = settings.conv_failure_switch;
 
     const size_t iter_max = settings.iter_max;
@@ -116,7 +116,7 @@ internal::bfgs_impl(
     const double wolfe_cons_2 = settings.bfgs_settings.wolfe_cons_2; // line search tuning parameter
 
     const bool vals_bound = settings.vals_bound;
-    
+
     const Vec_t lower_bounds = settings.lower_bounds;
     const Vec_t upper_bounds = settings.upper_bounds;
 
@@ -124,31 +124,33 @@ internal::bfgs_impl(
 
     // lambda function for box constraints
 
-    std::function<double (const Vec_t& vals_inp, Vec_t* grad_out, void* box_data)> box_objfn \
-    = [opt_objfn, vals_bound, bounds_type, lower_bounds, upper_bounds] (const Vec_t& vals_inp, Vec_t* grad_out, void* opt_data) \
-    -> double
+    std::function<double(const Vec_t& vals_inp, Vec_t* grad_out, void* box_data)> box_objfn \
+        = [opt_objfn, vals_bound, bounds_type, lower_bounds, upper_bounds](const Vec_t& vals_inp, Vec_t* grad_out, void* opt_data) \
+        -> double
     {
         if (vals_bound) {
             Vec_t vals_inv_trans = inv_transform(vals_inp, bounds_type, lower_bounds, upper_bounds);
             double ret;
-            
+
             if (grad_out) {
                 Vec_t grad_obj = *grad_out;
 
-                ret = opt_objfn(vals_inv_trans,&grad_obj,opt_data);
+                ret = opt_objfn(vals_inv_trans, &grad_obj, opt_data);
 
                 // Mat_t jacob_matrix = jacobian_adjust(vals_inp,bounds_type,lower_bounds,upper_bounds);
-                Vec_t jacob_vec = OPTIM_MATOPS_EXTRACT_DIAG( jacobian_adjust(vals_inp, bounds_type, lower_bounds, upper_bounds) );
+                Vec_t jacob_vec = OPTIM_MATOPS_EXTRACT_DIAG(jacobian_adjust(vals_inp, bounds_type, lower_bounds, upper_bounds));
 
                 // *grad_out = jacob_matrix * grad_obj; // no need for transpose as jacob_matrix is diagonal
                 *grad_out = OPTIM_MATOPS_HADAMARD_PROD(jacob_vec, grad_obj);
-            } else {
-                ret = opt_objfn(vals_inv_trans,nullptr,opt_data);
+            }
+            else {
+                ret = opt_objfn(vals_inv_trans, nullptr, opt_data);
             }
 
             return ret;
-        } else {
-            return opt_objfn(vals_inp,grad_out,opt_data);
+        }
+        else {
+            return opt_objfn(vals_inp, grad_out, opt_data);
         }
     };
 
@@ -156,7 +158,7 @@ internal::bfgs_impl(
 
     Vec_t x = init_out_vals;
 
-    if (! OPTIM_MATOPS_IS_FINITE(x) ) {
+    if (!OPTIM_MATOPS_IS_FINITE(x)) {
         //ChangedForGPBoost
         //printf("bfgs error: non-finite initial value(s).\n");
         Log::REWarning("bfgs error: non-finite initial value(s).\n");
@@ -188,7 +190,7 @@ internal::bfgs_impl(
 
     // if ||gradient(initial values)|| > tolerance, continue
 
-    d = - W*grad; // direction
+    d = -W * grad; // direction
 
     Vec_t x_p = x, grad_p = grad;
 
@@ -199,23 +201,24 @@ internal::bfgs_impl(
 
     // update approx. inverse Hessian (W)
 
-    double W_denom_term = OPTIM_MATOPS_DOT_PROD(y,s);
+    double W_denom_term = OPTIM_MATOPS_DOT_PROD(y, s);
     Mat_t W_term_1;
 
-    if (W_denom_term > 1E-10) {   
+    if (W_denom_term > 1E-10) {
         // checking whether the curvature condition holds: y's > 0
         W_term_1 = I_mat - s * (OPTIM_MATOPS_TRANSPOSE_IN_PLACE(y)) / W_denom_term;
-    
+
         // perform rank-1 update of inverse Hessian approximation
         W = W_term_1 * W * (OPTIM_MATOPS_TRANSPOSE_IN_PLACE(W_term_1)) + s * (OPTIM_MATOPS_TRANSPOSE_IN_PLACE(s)) / W_denom_term;
-    } else {
+    }
+    else {
         W = 0.1 * W;
     }
 
     grad = grad_p;
 
     grad_err = OPTIM_MATOPS_L2NORM(grad_p);
-    double rel_sol_change = OPTIM_MATOPS_L1NORM( OPTIM_MATOPS_ARRAY_DIV_ARRAY(s, (OPTIM_MATOPS_ARRAY_ADD_SCALAR(OPTIM_MATOPS_ABS(x), 1.0e-08)) ) );
+    double rel_sol_change = OPTIM_MATOPS_L1NORM(OPTIM_MATOPS_ARRAY_DIV_ARRAY(s, (OPTIM_MATOPS_ARRAY_ADD_SCALAR(OPTIM_MATOPS_ABS(x), 1.0e-08))));
 
     //ChangedForGPBoost
     //OPTIM_BFGS_TRACE(0, grad_err, rel_sol_change, x_p, d, grad_p, s, y, W);
@@ -229,12 +232,13 @@ internal::bfgs_impl(
 
     size_t iter = 0;
 
-    while (grad_err > grad_err_tol && rel_sol_change > rel_sol_change_tol && iter < iter_max) {
+    bool has_converged = false;
+    while (!has_converged) {
         ++iter;
 
         //
 
-        d = - W*grad;
+        d = -W * grad;
 
         line_search_mt(1.0, x_p, grad_p, d, &wolfe_cons_1, &wolfe_cons_2, box_objfn, opt_data);
 
@@ -243,25 +247,20 @@ internal::bfgs_impl(
         s = x_p - x;
         y = grad_p - grad;
 
-        W_denom_term = OPTIM_MATOPS_DOT_PROD(y,s);
+        W_denom_term = OPTIM_MATOPS_DOT_PROD(y, s);
 
         if (W_denom_term > 1E-10) {
             // checking the curvature condition y.s > 0
             W_term_1 = I_mat - s * OPTIM_MATOPS_TRANSPOSE_IN_PLACE(y) / W_denom_term;
-        
+
             W = W_term_1 * W * OPTIM_MATOPS_TRANSPOSE_IN_PLACE(W_term_1) + s * OPTIM_MATOPS_TRANSPOSE_IN_PLACE(s) / W_denom_term;
         }
 
-        //
-
         grad_err = OPTIM_MATOPS_L2NORM(grad_p);
-        rel_sol_change = OPTIM_MATOPS_L1NORM( OPTIM_MATOPS_ARRAY_DIV_ARRAY(s, (OPTIM_MATOPS_ARRAY_ADD_SCALAR(OPTIM_MATOPS_ABS(x), 1.0e-08)) ) );
-        
-        x = x_p;
-        grad = grad_p;
+        rel_sol_change = OPTIM_MATOPS_L1NORM(OPTIM_MATOPS_ARRAY_DIV_ARRAY(s, (OPTIM_MATOPS_ARRAY_ADD_SCALAR(OPTIM_MATOPS_ABS(x), 1.0e-08))));
 
-        //
-    
+        has_converged = !(grad_err > grad_err_tol && rel_sol_change > rel_sol_change_tol && iter < iter_max);
+
         //ChangedForGPBoost
         //OPTIM_BFGS_TRACE(iter, grad_err, rel_sol_change, x, d, grad, s, y, W);
         if (settings_inp) {
@@ -271,7 +270,23 @@ internal::bfgs_impl(
         Vec_t gradient_dummy(2);//"hack" for redermininig neighbors for the Vecchia approximation
         gradient_dummy[0] = 1.00000000001e30;
         gradient_dummy[1] = -1.00000000001e30;
-        opt_objfn(x, &gradient_dummy, opt_data);
+        if (has_converged) {
+            gradient_dummy[2] = 1.00000000001e30;//hack to force redetermination of nearest neighbors
+        }
+        else {
+            gradient_dummy[2] = -1.00000000001e30;
+        }
+        double neighbors_have_been_redetermined = opt_objfn(x, &gradient_dummy, opt_data);
+        //recalculated gradient of objective function if neighbors have been redetermined and check convergence again
+        if (neighbors_have_been_redetermined >= 1e30 && neighbors_have_been_redetermined <= 1.00000000002e30) {//hack that indicates that the neighbors have been redetermined
+            box_objfn(x_p, &grad_p, opt_data);
+            grad_err = OPTIM_MATOPS_L2NORM(grad_p);
+            has_converged = !(grad_err > grad_err_tol && rel_sol_change > rel_sol_change_tol && iter < iter_max);
+        }
+
+        x = x_p;
+        grad = grad_p;
+
         //print trace information
         if ((iter < 10 || (iter % 10 == 0 && iter < 100) || (iter % 100 == 0 && iter < 1000) ||
             (iter % 1000 == 0 && iter < 10000) || (iter % 10000 == 0)) && (iter != iter_max)) {
@@ -287,20 +302,20 @@ internal::bfgs_impl(
         x_p = inv_transform(x_p, bounds_type, lower_bounds, upper_bounds);
     }
 
-    error_reporting(init_out_vals, x_p, opt_objfn, opt_data, 
-                    success, grad_err, grad_err_tol, iter, iter_max, 
-                    conv_failure_switch, settings_inp);
+    error_reporting(init_out_vals, x_p, opt_objfn, opt_data,
+        success, grad_err, grad_err_tol, iter, iter_max,
+        conv_failure_switch, settings_inp);
 
     //
-    
+
     return success;
 }
 
 inline
 bool
 bfgs(
-    Vec_t& init_out_vals, 
-    std::function<double (const Vec_t& vals_inp, Vec_t* grad_out, void* opt_data)> opt_objfn, 
+    Vec_t& init_out_vals,
+    std::function<double(const Vec_t& vals_inp, Vec_t* grad_out, void* opt_data)> opt_objfn,
     void* opt_data)
 {
     return internal::bfgs_impl(init_out_vals, opt_objfn, opt_data, nullptr);
@@ -309,9 +324,9 @@ bfgs(
 inline
 bool
 bfgs(
-    Vec_t& init_out_vals, 
-    std::function<double (const Vec_t& vals_inp, Vec_t* grad_out, void* opt_data)> opt_objfn, 
-    void* opt_data, 
+    Vec_t& init_out_vals,
+    std::function<double(const Vec_t& vals_inp, Vec_t* grad_out, void* opt_data)> opt_objfn,
+    void* opt_data,
     algo_settings_t& settings)
 {
     return internal::bfgs_impl(init_out_vals, opt_objfn, opt_data, &settings);

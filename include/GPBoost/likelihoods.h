@@ -1824,6 +1824,9 @@ namespace GPBoost {
 			const den_mat_t& sigma_woodbury,
 			const sp_mat_t& B,
 			const sp_mat_t& D_inv,
+			const den_mat_t& Bt_D_inv_B_cross_cov,
+			const den_mat_t& D_inv_B_cross_cov,
+			const den_mat_t& B_cross_cov,
 			const bool first_update,
 			bool calc_mll,
 			double& approx_marginal_ll) {
@@ -1850,14 +1853,8 @@ namespace GPBoost {
 			sp_mat_t SigmaI, SigmaI_plus_W;
 			vec_t mode_update_lag1;//auxiliary variable used only if quasi_newton_for_mode_finding_
 			den_mat_t woodbury_cross_cov_Bt_D_inv_B;
-			den_mat_t Bt_D_inv_B_cross_cov;
 			if (quasi_newton_for_mode_finding_ || (cg_preconditioner_type_ == "Bt_Sigma_inv_plus_W_B" && matrix_inversion_method_ == "iterative")) {
 				mode_update_lag1 = mode_;
-				Bt_D_inv_B_cross_cov.resize(dim_mode_,num_ip);
-#pragma omp parallel for schedule(static)  
-				for (int i = 0; i < num_ip; i++){
-					Bt_D_inv_B_cross_cov.col(i) = B_t_D_inv_rm_ * (B_rm_ * (*cross_cov).col(i));
-				}
 				if (quasi_newton_for_mode_finding_) {
 					TriangularSolveGivenCholesky<chol_den_mat_t, den_mat_t, den_mat_t, den_mat_t>(chol_fact_sigma_woodbury, Bt_D_inv_B_cross_cov.transpose(), woodbury_cross_cov_Bt_D_inv_B, false);
 				}
@@ -1874,8 +1871,7 @@ namespace GPBoost {
 			// Initialize objective function (LA approx. marginal likelihood) for use as convergence criterion
 			B_mode = B_rm_ * mode_;
 			D_inv_B_mode = D_inv_rm_ * B_mode;
-			B_t_D_inv_B_mode = B_rm_.transpose() * D_inv_B_mode;
-			cross_cov_B_t_D_inv_B_mode = (*cross_cov).transpose() * B_t_D_inv_B_mode;
+			cross_cov_B_t_D_inv_B_mode = Bt_D_inv_B_cross_cov.transpose() * mode_;
 			wood_inv_cross_cov_B_t_D_inv_B_mode = chol_fact_sigma_woodbury.solve(cross_cov_B_t_D_inv_B_mode);
 			approx_marginal_ll = -0.5 * ((B_mode.dot(D_inv_B_mode)) - cross_cov_B_t_D_inv_B_mode.dot(wood_inv_cross_cov_B_t_D_inv_B_mode)) + LogLikelihood(y_data, y_data_int, location_par_ptr, num_data_);
 			double approx_marginal_ll_new = approx_marginal_ll;
@@ -1898,23 +1894,13 @@ namespace GPBoost {
 			vec_t rhs_part, rhs_part1, rhs_part2, W_rhs, second_deriv_neg_ll_inv(dim_mode_);
 			den_mat_t sigma_woodbury_2;
 			chol_den_mat_t chol_fact_sigma_woodbury_2;
-			den_mat_t sigma_resid_plus_W_inv_cross_cov, sigma_resid_inv_sigma_resid_plus_W_inv_cross_cov(dim_mode_, num_ip);
-			den_mat_t vecchia_cross_cov(dim_mode_,num_ip), B_t_D_inv_W_D_inv_inv_D_inv_B_cross_cov(dim_mode_, num_ip);
-			D_inv_B_cross_cov_.resize(dim_mode_, num_ip);
+			den_mat_t sigma_resid_plus_W_inv_cross_cov;
+			den_mat_t B_t_D_inv_W_D_inv_inv_D_inv_B_cross_cov(dim_mode_, num_ip);
+			D_inv_B_cross_cov_ = D_inv_B_cross_cov;
 			Log::REInfo("start");//only for debugging
 			std::chrono::steady_clock::time_point begin, end;//only for debugging
 			double el_time;//only for debugging
 			begin = std::chrono::steady_clock::now();//only for debugging
-#pragma omp parallel for schedule(static)   
-			for (int i = 0; i < num_ip; ++i) {
-				D_inv_B_cross_cov_.col(i) = D_inv_rm_ * (B_rm_ * (*cross_cov).col(i));
-			}
-			if (matrix_inversion_method_ == "cholesky") {
-#pragma omp parallel for schedule(static)   
-				for (int i = 0; i < num_ip; ++i) {
-					vecchia_cross_cov.col(i) = B_rm_.transpose() * D_inv_B_cross_cov_.col(i);
-				}
-			}
 			end = std::chrono::steady_clock::now();//only for debugging
 			el_time = (double)(std::chrono::duration_cast<std::chrono::microseconds>(end - begin).count()) / 1000000.;//only for debugging
 			Log::REInfo(" time until = %g ", el_time);
@@ -1929,18 +1915,25 @@ namespace GPBoost {
 					for (int i = 0; i < dim_mode_; ++i) {
 						diagonal_approx_preconditioner_vecchia[i] = B_rm_inv_D_sqrt_.row(i).dot(B_rm_inv_D_sqrt_.row(i));
 					}
+					diagonal_approx_preconditioner_.resize(dim_mode_);
 				}
 			}
 			for (it = 0; it < MAXIT_MODE_NEWTON_; ++it) {
 				// Calculate first and second derivative of log-likelihood
+				begin = std::chrono::steady_clock::now();//only for debugging
 				CalcFirstDerivLogLik(y_data, y_data_int, location_par_ptr);
+				end = std::chrono::steady_clock::now();//only for debugging
+				el_time = (double)(std::chrono::duration_cast<std::chrono::microseconds>(end - begin).count()) / 1000000.;//only for debugging
+				Log::REInfo("deriv1 = %g ", el_time);
 				CalcSecondDerivNegLogLik(y_data, y_data_int, location_par_ptr);
+				end = std::chrono::steady_clock::now();//only for debugging
+				el_time = (double)(std::chrono::duration_cast<std::chrono::microseconds>(end - begin).count()) / 1000000.;//only for debugging
 				if (quasi_newton_for_mode_finding_) {
 					B_mode = B_rm_ * mode_;
 					D_inv_B_mode = D_inv_rm_ * B_mode;
 					B_t_D_inv_B_mode = B_rm_.transpose() * D_inv_B_mode;
 					wood_inv_cross_cov_B_t_D_inv_B_mode = chol_fact_sigma_woodbury.solve((*cross_cov).transpose() * B_t_D_inv_B_mode);
-					vec_t grad = first_deriv_ll_ - B_t_D_inv_B_mode + B_t_D_inv_rm_ * (B_rm_ * ((*cross_cov) * wood_inv_cross_cov_B_t_D_inv_B_mode));
+					vec_t grad = first_deriv_ll_ - B_t_D_inv_B_mode + Bt_D_inv_B_cross_cov * wood_inv_cross_cov_B_t_D_inv_B_mode;
 					if (cg_preconditioner_type_ == "Bt_Sigma_inv_plus_W_B") {
 						W_D_inv = (second_deriv_neg_ll_ + D_inv_rm_.diagonal());
 						W_D_inv_inv = W_D_inv.cwiseInverse();
@@ -1951,7 +1944,7 @@ namespace GPBoost {
 						vec_t grad_aux = W_D_inv_inv.cwiseProduct(B_rm_.transpose().triangularView<Eigen::UpLoType::UnitUpper>().solve(grad));
 						//grad_aux.array() /= (D_inv.diagonal().array() + second_deriv_neg_ll_.array());
 						grad = B_rm_.triangularView<Eigen::UpLoType::UnitLower>().solve(grad_aux + 
-							W_D_inv_inv.cwiseProduct(B_t_D_inv_rm_.transpose() * ((*cross_cov) * chol_fact_sigma_woodbury_woodbury.solve((*cross_cov).transpose() * (B_t_D_inv_rm_ * grad_aux)))));
+							W_D_inv_inv.cwiseProduct(D_inv_B_cross_cov_ * chol_fact_sigma_woodbury_woodbury.solve(D_inv_B_cross_cov_.transpose() * grad_aux)));
 					}
 					else if (cg_preconditioner_type_ == "Sigma_plus_W_inv_low_rank") {
 						rhs_part1 = B_rm_.transpose().triangularView<Eigen::UpLoType::UnitUpper>().solve(grad);
@@ -1992,8 +1985,7 @@ namespace GPBoost {
 						CapChangeModeUpdateNewton(mode_new);
 						B_mode = B_rm_ * mode_new;
 						D_inv_B_mode = D_inv_rm_ * B_mode;
-						B_t_D_inv_B_mode = B_rm_.transpose() * D_inv_B_mode;
-						cross_cov_B_t_D_inv_B_mode = (*cross_cov).transpose() * B_t_D_inv_B_mode;
+						cross_cov_B_t_D_inv_B_mode = Bt_D_inv_B_cross_cov.transpose() * mode_new;
 						wood_inv_cross_cov_B_t_D_inv_B_mode = chol_fact_sigma_woodbury.solve(cross_cov_B_t_D_inv_B_mode);
 						UpdateLocationPar(mode_, fixed_effects, location_par, &location_par_ptr); // Update location parameter of log-likelihood for calculation of approx. marginal log-likelihood (objective function)
 						approx_marginal_ll_new = -0.5 * ((B_mode.dot(D_inv_B_mode)) - cross_cov_B_t_D_inv_B_mode.dot(wood_inv_cross_cov_B_t_D_inv_B_mode)) + LogLikelihood(y_data, y_data_int, location_par_ptr, num_data_);
@@ -2036,27 +2028,19 @@ namespace GPBoost {
 							}
 						} 
 						else if (cg_preconditioner_type_ == "Sigma_plus_W_inv_low_rank") {
-							begin = std::chrono::steady_clock::now();//only for debugging
 							second_deriv_neg_ll_inv.array() = second_deriv_neg_ll_.array().inverse();
-							diagonal_approx_preconditioner_.resize(dim_mode_);
 #pragma omp parallel for schedule(static)   
 							for (int i = 0; i < dim_mode_; ++i) {
 								diagonal_approx_preconditioner_[i] = diagonal_approx_preconditioner_vecchia[i] + second_deriv_neg_ll_inv[i];
 							}
 							diagonal_approx_inv_preconditioner_ = diagonal_approx_preconditioner_.cwiseInverse();
-							den_mat_t sigma_woodbury_preconditioner = (*cross_cov).transpose() * (diagonal_approx_inv_preconditioner_.asDiagonal() * (*cross_cov));
+							den_mat_t sigma_woodbury_preconditioner = ((*cross_cov).transpose() * diagonal_approx_inv_preconditioner_.asDiagonal()) * (*cross_cov);
 							sigma_woodbury_preconditioner += (*sigma_ip);
-							end = std::chrono::steady_clock::now();//only for debugging
-							el_time = (double)(std::chrono::duration_cast<std::chrono::microseconds>(end - begin).count()) / 1000000.;//only for debugging
-							Log::REInfo("wood time until = %g ", el_time);
 							chol_fact_woodbury_preconditioner_.compute(sigma_woodbury_preconditioner);
 							rhs_part1 = B_rm_.transpose().triangularView<Eigen::UpLoType::UnitUpper>().solve(rhs);
 							rhs_part = D_inv_B_rm_.triangularView<Eigen::UpLoType::Lower>().solve(rhs_part1);
 							rhs_part2 = (*cross_cov) * (chol_fact_sigma_ip.solve((*cross_cov).transpose() * rhs));
 							rhs = rhs_part + rhs_part2;
-							end = std::chrono::steady_clock::now();//only for debugging
-							el_time = (double)(std::chrono::duration_cast<std::chrono::microseconds>(end - begin).count()) / 1000000.;//only for debugging
-							Log::REInfo("CG time until = %g ", el_time);
 							CGFSVALowRankLaplaceVec(second_deriv_neg_ll_inv, D_inv_B_rm_, B_rm_, chol_fact_woodbury_preconditioner_,
 								chol_ip_cross_cov, cross_cov, diagonal_approx_inv_preconditioner_, rhs, mode_update_part, has_NA_or_Inf, 
 								cg_max_num_it, it, cg_delta_conv_, ZERO_RHS_CG_THRESHOLD, cg_preconditioner_type_);
@@ -2080,6 +2064,7 @@ namespace GPBoost {
 						}
 						chol_fact_SigmaI_plus_ZtWZ_vecchia_.factorize(SigmaI_plus_W);//This is the bottleneck for large data
 						sigma_resid_plus_W_inv_cross_cov = chol_fact_SigmaI_plus_ZtWZ_vecchia_.solve(second_deriv_neg_ll_.asDiagonal() * (*cross_cov));
+						den_mat_t sigma_resid_inv_sigma_resid_plus_W_inv_cross_cov(dim_mode_, num_ip);
 #pragma omp parallel for schedule(static)   
 						for (int i = 0; i < num_ip; ++i) {
 							sigma_resid_inv_sigma_resid_plus_W_inv_cross_cov.col(i) = B_t_D_inv_rm_ * (B_rm_ * sigma_resid_plus_W_inv_cross_cov.col(i));
@@ -2089,7 +2074,7 @@ namespace GPBoost {
 						mode_update_part = B_t_D_inv_rm_ * (B_rm_ * chol_fact_SigmaI_plus_ZtWZ_vecchia_.solve(W_rhs));
 						mode_update = second_deriv_neg_ll_inv.asDiagonal() * (mode_update_part - sigma_resid_inv_sigma_resid_plus_W_inv_cross_cov * chol_fact_sigma_woodbury_2.solve((*cross_cov).transpose() * mode_update_part));
 					} // end Cholesky
-					Log::REInfo("mode %g", mode_update.mean());
+					//Log::REInfo("mode %g", mode_update.mean());
 					// Backtracking line search
 					double lr_mode = 1.;
 					for (int ih = 0; ih < MAX_NUMBER_LR_SHRINKAGE_STEPS_NEWTON_; ++ih) {
@@ -2103,8 +2088,7 @@ namespace GPBoost {
 						UpdateLocationPar(mode_new, fixed_effects, location_par, &location_par_ptr); // Update location parameter of log-likelihood for calculation of approx. marginal log-likelihood (objective function)
 						B_mode = B_rm_ * mode_new;
 						D_inv_B_mode = D_inv_rm_ * B_mode;
-						B_t_D_inv_B_mode = B_rm_.transpose() * D_inv_B_mode;
-						cross_cov_B_t_D_inv_B_mode = (*cross_cov).transpose() * B_t_D_inv_B_mode;
+						cross_cov_B_t_D_inv_B_mode = Bt_D_inv_B_cross_cov.transpose() * mode_new;
 						wood_inv_cross_cov_B_t_D_inv_B_mode = chol_fact_sigma_woodbury.solve(cross_cov_B_t_D_inv_B_mode);
 						approx_marginal_ll_new = -0.5 * ((B_mode.dot(D_inv_B_mode)) - cross_cov_B_t_D_inv_B_mode.dot(wood_inv_cross_cov_B_t_D_inv_B_mode)) + LogLikelihood(y_data, y_data_int, location_par_ptr, num_data_);
 						if (approx_marginal_ll_new < approx_marginal_ll ||
@@ -2122,7 +2106,7 @@ namespace GPBoost {
 					break;
 				}
 			} // end loop for mode finding
-			Log::REInfo("ll %g", approx_marginal_ll);
+			//Log::REInfo("ll %g", approx_marginal_ll);
 			if (!has_NA_or_Inf) {//calculate determinant
 				mode_has_been_calculated_ = true;
 				mode_is_zero_ = false;
@@ -2212,9 +2196,6 @@ namespace GPBoost {
 							approx_marginal_ll -= 0.5 * log_det_Sigma_W_plus_I;
 						}
 					}//end calculate determinant term for approx_marginal_ll
-					end = std::chrono::steady_clock::now();//only for debugging
-					el_time = (double)(std::chrono::duration_cast<std::chrono::microseconds>(end - begin).count()) / 1000000.;//only for debugging
-					Log::REInfo(" time until CG rand vec = %g ", el_time);
 				}//end iterative
 				else {
 					SigmaI_plus_W = SigmaI;
@@ -2226,7 +2207,7 @@ namespace GPBoost {
 					}
 					chol_fact_SigmaI_plus_ZtWZ_vecchia_.factorize(SigmaI_plus_W);
 					TriangularSolveGivenCholesky<chol_sp_mat_t, sp_mat_t, den_mat_t, den_mat_t>(chol_fact_SigmaI_plus_ZtWZ_vecchia_,
-						vecchia_cross_cov, chol_fact_SigmaI_plus_ZtWZ_vecchia_cross_cov, false);
+						Bt_D_inv_B_cross_cov, chol_fact_SigmaI_plus_ZtWZ_vecchia_cross_cov, false);
 					sigma_woodbury_woodbury_ = sigma_woodbury - chol_fact_SigmaI_plus_ZtWZ_vecchia_cross_cov.transpose() * chol_fact_SigmaI_plus_ZtWZ_vecchia_cross_cov;
 					chol_fact_sigma_woodbury_woodbury_.compute(sigma_woodbury_woodbury_);
 					approx_marginal_ll += -((sp_mat_t)chol_fact_SigmaI_plus_ZtWZ_vecchia_.matrixL()).diagonal().array().log().sum() + 0.5 * D_inv.diagonal().array().log().sum();
@@ -2314,7 +2295,11 @@ namespace GPBoost {
 			bool terminate_optim = false;
 			bool has_NA_or_Inf = false;
 			double lr_GD = 1.;// learning rate for gradient descent
+			std::chrono::steady_clock::time_point begin, end;//only for debugging
+			double el_time;//only for debugging
 			for (it = 0; it < MAXIT_MODE_NEWTON_; ++it) {
+				Log::REInfo("start");//only for debugging
+				begin = std::chrono::steady_clock::now();//only for debugging
 				// Calculate first and second derivative of log-likelihood
 				CalcFirstDerivLogLik(y_data, y_data_int, location_par_ptr);
 				CalcSecondDerivNegLogLik(y_data, y_data_int, location_par_ptr);
@@ -2426,6 +2411,9 @@ namespace GPBoost {
 					}// end loop over learnig rate halving procedure
 					mode_ = mode_new;
 				}//end Newton's method
+				end = std::chrono::steady_clock::now();//only for debugging
+				el_time = (double)(std::chrono::duration_cast<std::chrono::microseconds>(end - begin).count()) / 1000000.;//only for debugging
+				Log::REInfo(" time until CG rand vec = %g ", el_time);
 				CheckConvergenceModeFinding(it, approx_marginal_ll_new, approx_marginal_ll, terminate_optim, has_NA_or_Inf);
 				if (terminate_optim || has_NA_or_Inf) {
 					break;
@@ -2437,6 +2425,7 @@ namespace GPBoost {
 				na_or_inf_during_last_call_to_find_mode_ = false;
 				CalcFirstDerivLogLik(y_data, y_data_int, location_par_ptr);//first derivative is not used here anymore but since it is reused in gradient calculation and in prediction, we calculate it once more
 				CalcSecondDerivNegLogLik(y_data, y_data_int, location_par_ptr);
+				begin = std::chrono::steady_clock::now();//only for debugging
 				if (matrix_inversion_method_ == "iterative") {
 					//Seed Generator
 					if (!cg_generator_seeded_) {
@@ -2489,6 +2478,9 @@ namespace GPBoost {
 					chol_fact_SigmaI_plus_ZtWZ_vecchia_.factorize(SigmaI_plus_W);
 					approx_marginal_ll += -((sp_mat_t)chol_fact_SigmaI_plus_ZtWZ_vecchia_.matrixL()).diagonal().array().log().sum() + 0.5 * D_inv.diagonal().array().log().sum();
 				}
+				end = std::chrono::steady_clock::now();//only for debugging
+				el_time = (double)(std::chrono::duration_cast<std::chrono::microseconds>(end - begin).count()) / 1000000.;//only for debugging
+				Log::REInfo(" time until logdet = %g ", el_time);
 			}
 			Log::REInfo("NEGLL %g", approx_marginal_ll);
 			Log::REInfo("FindModePostRandEffCalcMLLVecchia: finished after %d iterations ", it);//for debugging
@@ -2544,7 +2536,11 @@ namespace GPBoost {
 			int it;
 			bool terminate_optim = false;
 			bool has_NA_or_Inf = false;
+			std::chrono::steady_clock::time_point begin, end;//only for debugging
+			double el_time;//only for debugging
 			for (it = 0; it < MAXIT_MODE_NEWTON_; ++it) {
+				Log::REInfo("start");//only for debugging
+				begin = std::chrono::steady_clock::now();//only for debugging
 				// Calculate first and second derivative of log-likelihood
 				CalcFirstDerivLogLik(y_data, y_data_int, location_par_ptr);
 				CalcSecondDerivNegLogLik(y_data, y_data_int, location_par_ptr);
@@ -2569,6 +2565,9 @@ namespace GPBoost {
 				vaux3 = chol_fact_sigma_ip.solve((*cross_cov).transpose() * a_vec_update);
 				mode_update = ((*cross_cov) * vaux3) + (fitc_diag.asDiagonal() * a_vec_update);//mode_ = Sigma * a_vec_
 				double lr_mode = 1.;
+				end = std::chrono::steady_clock::now();//only for debugging
+				el_time = (double)(std::chrono::duration_cast<std::chrono::microseconds>(end - begin).count()) / 1000000.;//only for debugging
+				Log::REInfo(" time until CG = %g ", el_time);
 				for (int ih = 0; ih < MAX_NUMBER_LR_SHRINKAGE_STEPS_NEWTON_; ++ih) {
 					if (ih == 0) {
 						a_vec_new = a_vec_update;
@@ -3071,6 +3070,11 @@ namespace GPBoost {
 			const std::vector<std::shared_ptr<RECompGP<den_mat_t>>>& re_comps_cross_cov_cluster_i,
 			const sp_mat_t& B,
 			const sp_mat_t& D_inv,
+			const den_mat_t& Bt_D_inv_B_cross_cov,
+			const den_mat_t& D_inv_B_cross_cov,
+			const den_mat_t& B_cross_cov,
+			const den_mat_t& sigma_ip_inv_cross_cov_T_cluster_i,
+			const std::vector<den_mat_t>& sigma_ip_grad_sigma_ip_inv_cross_cov_T_cluster_i,
 			const std::vector<sp_mat_t>& B_grad,
 			const std::vector<sp_mat_t>& D_grad,
 			bool calc_cov_grad,
@@ -3088,7 +3092,7 @@ namespace GPBoost {
 			if (calc_mode) {// Calculate mode and Cholesky factor 
 				double mll;//approximate marginal likelihood. This is a by-product that is not used here.
 				FindModePostRandEffCalcMLLFSAVecchia(y_data, y_data_int, fixed_effects, sigma_ip, chol_fact_sigma_ip, chol_fact_sigma_woodbury,
-					chol_ip_cross_cov, cross_cov, sigma_woodbury, B, D_inv, false, true, mll);
+					chol_ip_cross_cov, cross_cov, sigma_woodbury, B, D_inv, Bt_D_inv_B_cross_cov, D_inv_B_cross_cov, B_cross_cov, false, true, mll);
 			}
 			if (na_or_inf_during_last_call_to_find_mode_) {
 				if (call_for_std_dev_coef) {
@@ -3116,11 +3120,6 @@ namespace GPBoost {
 			vec_t W_D_inv = second_deriv_neg_ll_ + D_inv_rm_.diagonal();
 			vec_t W_D_inv_inv = W_D_inv.cwiseInverse();
 			vec_t d_mll_d_mode;
-			den_mat_t Bt_D_inv_B_cross_cov(dim_mode_, num_ip);
-#pragma omp parallel for schedule(static)  
-			for (int ii = 0; ii < num_ip; ii++) {
-				Bt_D_inv_B_cross_cov.col(ii) = B_t_D_inv_rm_ * (B_rm_ * (*cross_cov).col(ii));
-			}
 			if (matrix_inversion_method_ == "iterative") {
 				double c_opt;
 				sp_mat_rm_t SigmaI_rm = B_t_D_inv_rm_ * B_rm_;
@@ -3152,14 +3151,14 @@ namespace GPBoost {
 						tr_PI_P_deriv_vec[i] -= Preconditioner_PP_inv.col(i).array().square().sum() * W_deriv_rep.col(0)[i];
 					}
 					//optimal c
-					Log::REInfo("mean1 %g", tr_PI_P_deriv_vec.mean());
-					Log::REInfo("mean1 %g", tr_PI_inv_W_deriv.mean());
-					Log::REInfo("mean1 %g", Z_SigmaI_plus_W_inv_W_deriv_PI_Z.mean());
+					//Log::REInfo("mean1 %g", tr_PI_P_deriv_vec.mean());
+					//Log::REInfo("mean1 %g", tr_PI_inv_W_deriv.mean());
+					//Log::REInfo("mean1 %g", Z_SigmaI_plus_W_inv_W_deriv_PI_Z.mean());
 					CalcOptimalCVectorized(Z_SigmaI_plus_W_inv_W_deriv_PI_Z, Z_PI_P_deriv_PI_Z, tr_SigmaI_plus_W_inv_W_deriv, tr_PI_P_deriv_vec, c_opt_vec);
 					d_log_det_Sigma_W_plus_I_d_mode += c_opt_vec.cwiseProduct(tr_PI_P_deriv_vec - tr_PI_inv_W_deriv);
-					Log::REInfo("c_mean %g", c_opt_vec.mean());
-					Log::REInfo("c_max %g", c_opt_vec.maxCoeff());
-					Log::REInfo("c_min %g", c_opt_vec.minCoeff());
+					//Log::REInfo("c_mean %g", c_opt_vec.mean());
+					//Log::REInfo("c_max %g", c_opt_vec.maxCoeff());
+					//Log::REInfo("c_min %g", c_opt_vec.minCoeff());
 					d_mll_d_mode = 0.5 * d_log_det_Sigma_W_plus_I_d_mode;
 					//For implicit derivatives: calculate (Sigma^(-1) + W)^(-1) d_mll_d_mode
 					bool has_NA_or_Inf = false;
@@ -3179,7 +3178,6 @@ namespace GPBoost {
 						sp_mat_rm_t SigmaI_deriv_rm, Bt_Dinv_Bgrad_rm, B_t_D_inv_D_grad_D_inv_B_rm;
 						double explicit_derivative, d_log_det_Sigma_W_plus_I_d_cov_pars;
 						int num_par = (int)B_grad.size();
-						den_mat_t sigma_ip_cross_cov = chol_fact_sigma_ip.solve((*cross_cov).transpose());
 						sp_mat_rm_t B_inv(B_rm_.rows(), B_rm_.cols());
 						B_inv.setIdentity();
 						TriangularSolve<sp_mat_rm_t, sp_mat_rm_t, sp_mat_rm_t>(B_rm_, B_inv, B_inv, false);
@@ -3216,7 +3214,7 @@ namespace GPBoost {
 									SigmaI_rm * ((*cross_cov) * chol_fact_sigma_woodbury.solve((*cross_cov_grad).transpose() * SigmaI_mode)) +
 									SigmaI_rm * ((*cross_cov) * chol_fact_sigma_woodbury.solve(sigma_woodbury_grad * chol_fact_sigma_woodbury.solve((*cross_cov).transpose() * SigmaI_mode)));
 								explicit_derivative = 0.5 * (mode_.dot(SigmaI_deriv_mode));
-								Log::REInfo("mode %g", (mode_.dot(SigmaI_deriv_mode)));
+								//Log::REInfo("mode %g", (mode_.dot(SigmaI_deriv_mode)));
 								
 								den_mat_t cross_cov_PI_Z = (*cross_cov).transpose() * PI_Z;
 								den_mat_t PP_deriv_sample_vec = (*cross_cov_grad) * chol_fact_sigma_ip.solve(cross_cov_PI_Z) + (*cross_cov) * chol_fact_sigma_ip.solve((*cross_cov_grad).transpose() * PI_Z) -
@@ -3231,54 +3229,53 @@ namespace GPBoost {
 								vec_t sample_Sigma = (SigmaI_plus_W_inv_Z_.cwiseProduct(SigmaI_deriv_sample_vec)).colwise().sum();
 								double stoch_tr = sample_Sigma.mean();
 								d_log_det_Sigma_W_plus_I_d_cov_pars = stoch_tr;
-								den_mat_t P_grad_PI_Z = PP_deriv_sample_vec;
-								Log::REInfo("d_log_det_Sigma_W_plus_I_d_cov_pars %g", d_log_det_Sigma_W_plus_I_d_cov_pars);
-								vec_t diagonal_approx_preconditioner_grad_(dim_mode_); 
-								diagonal_approx_preconditioner_grad_.setZero();
-								sp_mat_rm_t B_rm_inv_D_grad = sp_mat_rm_t(B_rm_.rows(), B_rm_.cols());
-								sp_mat_rm_t D_grad_diag_sqrt = sp_mat_rm_t(D_grad_diagonal.cwiseSqrt().asDiagonal());
-								TriangularSolve<sp_mat_rm_t, sp_mat_rm_t, sp_mat_rm_t>(B_rm_, D_grad_diag_sqrt, B_rm_inv_D_grad, false);
+								// No Variance reduction??
+								//den_mat_t P_grad_PI_Z = PP_deriv_sample_vec;
+								//Log::REInfo("d_log_det_Sigma_W_plus_I_d_cov_pars %g", d_log_det_Sigma_W_plus_I_d_cov_pars);
+								//vec_t diagonal_approx_preconditioner_grad_(dim_mode_); 
+								//diagonal_approx_preconditioner_grad_.setZero();
+								//sp_mat_rm_t B_rm_inv_D_grad = sp_mat_rm_t(B_rm_.rows(), B_rm_.cols());
+								//sp_mat_rm_t D_grad_diag_sqrt = sp_mat_rm_t(D_grad_diagonal.cwiseSqrt().asDiagonal());
+								//TriangularSolve<sp_mat_rm_t, sp_mat_rm_t, sp_mat_rm_t>(B_rm_, D_grad_diag_sqrt, B_rm_inv_D_grad, false);
 //#pragma omp parallel for schedule(static)   
 //								for (int ii = 0; ii < dim_mode_; ++ii) {
 //									diagonal_approx_preconditioner_grad_[ii] = B_rm_inv_D_grad.row(ii).dot(B_rm_inv_D_grad.row(ii)) - 
 //										2. * B_inv.row(ii).dot(B_grad[ipar] * (B_rm_inv_D_sqrt_ * B_rm_inv_D_sqrt_.row(ii).transpose()));
 //								}//TODO Tim
-								P_grad_PI_Z += diagonal_approx_preconditioner_grad_.asDiagonal() * PI_Z;
+								//P_grad_PI_Z += diagonal_approx_preconditioner_grad_.asDiagonal() * PI_Z;
 
-								double tr_PI_P_grad = (diagonal_approx_preconditioner_grad_.array()* diagonal_approx_inv_preconditioner_.array()).sum();
-								Log::REInfo("Test1 %g", tr_PI_P_grad);
-								den_mat_t sigma_ip_cross_cov_grad = chol_fact_sigma_ip.solve((*cross_cov_grad).transpose());
-								den_mat_t sigma_ip_grad_sigma_ip_cross_cov = sigma_ip_grad * sigma_ip_cross_cov;
-								vec_t tr_PI_P_grad_vec(dim_mode_);
-#pragma omp parallel for schedule(static)  
-								for (int ii = 0; ii < dim_mode_; ii++) {
-									tr_PI_P_grad_vec[ii] = diagonal_approx_inv_preconditioner_[ii] * (2 * (sigma_ip_cross_cov_grad.col(ii).dot((*cross_cov).row(ii)))
-										- (sigma_ip_cross_cov.col(ii).array() * sigma_ip_grad_sigma_ip_cross_cov.col(ii).array()).sum()) -
-										diagonal_approx_preconditioner_grad_[ii] * Preconditioner_PP_inv.col(ii).array().square().sum();
-								}
-								tr_PI_P_grad += tr_PI_P_grad_vec.sum();
-								Log::REInfo("Test2 %g", tr_PI_P_grad);
-								den_mat_t Preconditioner_PP_inv_PP_grad = (Preconditioner_PP_inv * (*cross_cov)) * sigma_ip_cross_cov_grad + 
-									(Preconditioner_PP_inv * (*cross_cov_grad)) * sigma_ip_cross_cov -
-									(Preconditioner_PP_inv * sigma_ip_grad_sigma_ip_cross_cov.transpose()) * sigma_ip_cross_cov;
-#pragma omp parallel for schedule(static)  
-								for (int ii = 0; ii < dim_mode_; ii++) {
-									tr_PI_P_grad_vec[ii] = (Preconditioner_PP_inv.col(ii).array() * Preconditioner_PP_inv_PP_grad.col(ii).array()).sum();
-								}
-								tr_PI_P_grad -= tr_PI_P_grad_vec.sum();
-								Log::REInfo("Test %g", stoch_tr);
-								Log::REInfo("Test %g", tr_PI_P_grad);
-								vec_t sample_P = (PI_Z.cwiseProduct(P_grad_PI_Z)).colwise().sum();
-								CalcOptimalC(sample_Sigma, sample_P, stoch_tr, tr_PI_P_grad, c_opt);
-								d_log_det_Sigma_W_plus_I_d_cov_pars -= c_opt * (sample_P.mean() - tr_PI_P_grad);
-								Log::REInfo("Test %g", sample_P.mean());
-								Log::REInfo("Test %g", c_opt);
+								//double tr_PI_P_grad = (diagonal_approx_preconditioner_grad_.array()* diagonal_approx_inv_preconditioner_.array()).sum();
+								//Log::REInfo("Test1 %g", tr_PI_P_grad);
+								//vec_t tr_PI_P_grad_vec(dim_mode_);
+//#pragma omp parallel for schedule(static)  
+								//for (int ii = 0; ii < dim_mode_; ii++) {
+								//	tr_PI_P_grad_vec[ii] = diagonal_approx_inv_preconditioner_[ii] * (2 * (sigma_ip_inv_cross_cov_T_cluster_i.col(ii).dot((*cross_cov_grad).row(ii)))
+								//		- (sigma_ip_inv_cross_cov_T_cluster_i.col(ii).array() * sigma_ip_grad_sigma_ip_inv_cross_cov_T_cluster_i.col(ii).array()).sum()) -
+								//		diagonal_approx_preconditioner_grad_[ii] * Preconditioner_PP_inv.col(ii).array().square().sum();
+								//}
+								//tr_PI_P_grad += tr_PI_P_grad_vec.sum();
+								//Log::REInfo("Test2 %g", tr_PI_P_grad);
+								//den_mat_t Preconditioner_PP_inv_PP_grad = (Preconditioner_PP_inv * sigma_ip_inv_cross_cov_T_cluster_i.transpose()) * (*cross_cov_grad) +
+								//	(Preconditioner_PP_inv * (*cross_cov_grad)) * sigma_ip_inv_cross_cov_T_cluster_i -
+								//	(Preconditioner_PP_inv * sigma_ip_grad_sigma_ip_inv_cross_cov_T_cluster_i.transpose()) * sigma_ip_inv_cross_cov_T_cluster_i;
+//#pragma omp parallel for schedule(static)  
+								//for (int ii = 0; ii < dim_mode_; ii++) {
+								//	tr_PI_P_grad_vec[ii] = (Preconditioner_PP_inv.col(ii).array() * Preconditioner_PP_inv_PP_grad.col(ii).array()).sum();
+								//}
+								//tr_PI_P_grad -= tr_PI_P_grad_vec.sum();
+								//Log::REInfo("Test %g", stoch_tr);
+								//Log::REInfo("Test %g", tr_PI_P_grad);
+								//vec_t sample_P = (PI_Z.cwiseProduct(P_grad_PI_Z)).colwise().sum();
+								//CalcOptimalC(sample_Sigma, sample_P, stoch_tr, tr_PI_P_grad, c_opt);
+								//d_log_det_Sigma_W_plus_I_d_cov_pars -= c_opt * (sample_P.mean() - tr_PI_P_grad);
+								//Log::REInfo("Test %g", sample_P.mean());
+								//Log::REInfo("Test %g", c_opt);
 								
-								Log::REInfo("tr final %g", d_log_det_Sigma_W_plus_I_d_cov_pars);
+								//Log::REInfo("tr final %g", d_log_det_Sigma_W_plus_I_d_cov_pars);
 								explicit_derivative += 0.5 * d_log_det_Sigma_W_plus_I_d_cov_pars;
-								Log::REInfo("explicit_derivative %g", explicit_derivative);
+								//Log::REInfo("explicit_derivative %g", explicit_derivative);
 								cov_grad[ipar] = explicit_derivative - SigmaI_plus_W_inv_d_mll_d_mode.dot(SigmaI_deriv_mode);
-								Log::REInfo("SigmaI_plus_W_inv_d_mll_d_mode %g", SigmaI_plus_W_inv_d_mll_d_mode.dot(SigmaI_deriv_mode));
+								//Log::REInfo("SigmaI_plus_W_inv_d_mll_d_mode %g", SigmaI_plus_W_inv_d_mll_d_mode.dot(SigmaI_deriv_mode));
 							}
 						}
 					}
@@ -3357,16 +3354,11 @@ namespace GPBoost {
 						for (int i = 0; i < num_rand_vec_trace_; ++i) {
 							W_D_inv_inv_B_invt_rand_vec_trace_I.col(i) = W_D_inv_inv.cwiseProduct(B_rm_.transpose().triangularView<Eigen::UpLoType::UnitUpper>().solve(rand_vec_trace_I_.col(i)));
 						}
-						den_mat_t B_t_D_inv_W_D_inv_inv_B_invt_rand_vec_trace_I(dim_mode_, num_rand_vec_trace_);
-#pragma omp parallel for schedule(static)   
-						for (int i = 0; i < num_rand_vec_trace_; ++i) {
-							B_t_D_inv_W_D_inv_inv_B_invt_rand_vec_trace_I.col(i) = B_t_D_inv_rm_ * W_D_inv_inv_B_invt_rand_vec_trace_I.col(i);
-						}
-						den_mat_t cross_cov_sigma_woodbury_woodbury_cross_cov_B_t_D_inv_W_D_inv_inv_B_invt_rand_vec_trace_I = (*cross_cov) * (chol_fact_sigma_woodbury_woodbury_.solve((*cross_cov).transpose() * B_t_D_inv_W_D_inv_inv_B_invt_rand_vec_trace_I));
+						den_mat_t sigma_woodbury_woodbury_cross_cov_B_t_D_inv_W_D_inv_inv_B_invt_rand_vec_trace_I = (chol_fact_sigma_woodbury_woodbury_.solve(D_inv_B_cross_cov.transpose() * W_D_inv_inv_B_invt_rand_vec_trace_I));
 						den_mat_t vecchia_cross_cov_sigma_woodbury_woodbury_inv_cross_cov_vecchia(dim_mode_, num_rand_vec_trace_);
 #pragma omp parallel for schedule(static)   
 						for (int i = 0; i < num_rand_vec_trace_; ++i) {
-							vecchia_cross_cov_sigma_woodbury_woodbury_inv_cross_cov_vecchia.col(i) = W_D_inv_inv.cwiseProduct(B_t_D_inv_rm_.transpose() * cross_cov_sigma_woodbury_woodbury_cross_cov_B_t_D_inv_W_D_inv_inv_B_invt_rand_vec_trace_I.col(i));
+							vecchia_cross_cov_sigma_woodbury_woodbury_inv_cross_cov_vecchia.col(i) = W_D_inv_inv.cwiseProduct(D_inv_B_cross_cov * sigma_woodbury_woodbury_cross_cov_B_t_D_inv_W_D_inv_inv_B_invt_rand_vec_trace_I.col(i));
 						}
 						den_mat_t W_D_inv_inv_plus_vecchia_woodbury_woodbury_B_invt_rand_vec_trace_I = W_D_inv_inv_B_invt_rand_vec_trace_I + vecchia_cross_cov_sigma_woodbury_woodbury_inv_cross_cov_vecchia;
 #pragma omp parallel for schedule(static)   
@@ -3389,20 +3381,20 @@ namespace GPBoost {
 						tr_PI_P_deriv_vec = W_D_inv_inv.cwiseProduct(-1. * third_deriv);
 						den_mat_t chol_fact_sigma_woodbury_woodbury_D_inv_B_cross_cov;
 						TriangularSolveGivenCholesky<chol_den_mat_t, den_mat_t, den_mat_t, den_mat_t>(chol_fact_sigma_woodbury_woodbury_,
-							D_inv_B_cross_cov_.transpose() * W_D_inv_inv.asDiagonal(), chol_fact_sigma_woodbury_woodbury_D_inv_B_cross_cov, false);
+							D_inv_B_cross_cov.transpose() * W_D_inv_inv.asDiagonal(), chol_fact_sigma_woodbury_woodbury_D_inv_B_cross_cov, false);
 #pragma omp parallel for schedule(static)   
 						for (int i = 0; i < dim_mode_; ++i) {
 							tr_PI_P_deriv_vec[i] -= chol_fact_sigma_woodbury_woodbury_D_inv_B_cross_cov.col(i).array().square().sum() * third_deriv[i];
 						}
 						//optimal c
-						Log::REInfo("mean1 %g", tr_PI_P_deriv_vec.mean());
-						Log::REInfo("mean1 %g", tr_PI_inv_W_deriv.mean());
-						Log::REInfo("mean1 %g", Z_SigmaI_plus_W_inv_W_deriv_PI_Z.mean());
+						//Log::REInfo("mean1 %g", tr_PI_P_deriv_vec.mean());
+						//Log::REInfo("mean1 %g", tr_PI_inv_W_deriv.mean());
+						//Log::REInfo("mean1 %g", Z_SigmaI_plus_W_inv_W_deriv_PI_Z.mean());
 						CalcOptimalCVectorized(Z_SigmaI_plus_W_inv_W_deriv_PI_Z, Z_PI_P_deriv_PI_Z, tr_SigmaI_plus_W_inv_W_deriv, tr_PI_P_deriv_vec, c_opt_vec);
 						d_log_det_Sigma_W_plus_I_d_mode += c_opt_vec.cwiseProduct(tr_PI_P_deriv_vec - tr_PI_inv_W_deriv);
-						Log::REInfo("c_mean %g", c_opt_vec.mean());
-						Log::REInfo("c_max %g", c_opt_vec.maxCoeff());
-						Log::REInfo("c_min %g", c_opt_vec.minCoeff());
+						//Log::REInfo("c_mean %g", c_opt_vec.mean());
+						//Log::REInfo("c_max %g", c_opt_vec.maxCoeff());
+						//Log::REInfo("c_min %g", c_opt_vec.minCoeff());
 					}
 					else {
 						Z_SigmaI_plus_W_inv_W_deriv_PI_Z = SigmaI_plus_W_inv_Z_.cwiseProduct(rand_vec_trace_I_);
@@ -3456,7 +3448,7 @@ namespace GPBoost {
 									SigmaI_rm * ((*cross_cov) * chol_fact_sigma_woodbury.solve((*cross_cov_grad).transpose() * SigmaI_mode)) +
 									SigmaI_rm * ((*cross_cov) * chol_fact_sigma_woodbury.solve(sigma_woodbury_grad * chol_fact_sigma_woodbury.solve((*cross_cov).transpose() * SigmaI_mode)));
 								explicit_derivative = 0.5 * (mode_.dot(SigmaI_deriv_mode));
-								Log::REInfo("mode %g", (mode_.dot(SigmaI_deriv_mode)));
+								//Log::REInfo("mode %g", (mode_.dot(SigmaI_deriv_mode)));
 								d_log_det_Sigma_W_plus_I_d_cov_pars = 0;
 								//if (num_comps_total == 1 && ipar == 0) {
 								//	d_log_det_Sigma_W_plus_I_d_cov_pars += dim_mode_;
@@ -3466,7 +3458,7 @@ namespace GPBoost {
 								//}
 								d_log_det_Sigma_W_plus_I_d_cov_pars -= sigma_ip_inv_sigma_ip_grad.trace();
 								d_log_det_Sigma_W_plus_I_d_cov_pars += (chol_fact_sigma_woodbury.solve(sigma_woodbury_grad)).trace();
-								Log::REInfo("d_log_det_Sigma_W_plus_I_d_cov_pars %g", d_log_det_Sigma_W_plus_I_d_cov_pars);
+								//Log::REInfo("d_log_det_Sigma_W_plus_I_d_cov_pars %g", d_log_det_Sigma_W_plus_I_d_cov_pars);
 								den_mat_t SigmaI_deriv_sample_vec_part(dim_mode_, num_rand_vec_trace_),
 									SigmaI_sample_vec(dim_mode_, num_rand_vec_trace_), SigmaI_deriv_sample_vec(dim_mode_, num_rand_vec_trace_);
 								den_mat_t sample_vec_final;
@@ -3495,8 +3487,8 @@ namespace GPBoost {
 								vec_t sample_Sigma = (SigmaI_plus_W_inv_Z_.cwiseProduct(SigmaI_deriv_sample_vec)).colwise().sum();
 								double stoch_tr = sample_Sigma.mean();
 								d_log_det_Sigma_W_plus_I_d_cov_pars += stoch_tr;
-								Log::REInfo("stoch_tr %g", stoch_tr);
-								Log::REInfo("d_log_det_Sigma_W_plus_I_d_cov_pars %g", d_log_det_Sigma_W_plus_I_d_cov_pars);
+								//Log::REInfo("stoch_tr %g", stoch_tr);
+								//Log::REInfo("d_log_det_Sigma_W_plus_I_d_cov_pars %g", d_log_det_Sigma_W_plus_I_d_cov_pars);
 								if (cg_preconditioner_type_ == "Bt_Sigma_inv_plus_W_B") {
 									sp_mat_rm_t B_grad_rm = sp_mat_rm_t(B_grad[ipar]);
 									den_mat_t P_grad_PI_Z = SigmaI_deriv_sample_vec;
@@ -3530,8 +3522,8 @@ namespace GPBoost {
 									//else {
 									D_inv_D_grad_D_inv = (D_inv_rm_.diagonal().array().square() * D_grad[ipar].diagonal().array()).matrix();
 									//}
-									Log::REInfo("test1 %g", -D_inv_rm_.diagonal()[0]);
-									Log::REInfo("test1 %g", D_inv_D_grad_D_inv[0]);
+									//Log::REInfo("test1 %g", -D_inv_rm_.diagonal()[0]);
+									//Log::REInfo("test1 %g", D_inv_D_grad_D_inv[0]);
 #pragma omp parallel for schedule(static)  
 									for (int ii = 0; ii < num_ip; ii++) {
 										D_inv_grad_B_cross_cov.col(ii) = -D_inv_D_grad_D_inv.cwiseProduct(B_rm_ * (*cross_cov).col(ii));
@@ -3550,19 +3542,19 @@ namespace GPBoost {
 									double tr_PI_P_grad = -(W_D_inv_inv.array() * D_inv_D_grad_D_inv.array()).sum() -
 										(chol_fact_sigma_woodbury.solve(sigma_woodbury_grad)).trace() +
 										(chol_fact_sigma_woodbury_woodbury_.solve(sigma_woodbury_woodbury_grad)).trace();
-									Log::REInfo("Test %g", stoch_tr);
-									Log::REInfo("Test %g", tr_PI_P_grad);
+									//Log::REInfo("Test %g", stoch_tr);
+									//Log::REInfo("Test %g", tr_PI_P_grad);
 									vec_t sample_P = (PI_Z.cwiseProduct(P_grad_PI_Z)).colwise().sum();
 									CalcOptimalC(sample_Sigma, sample_P, stoch_tr, tr_PI_P_grad, c_opt);
 									d_log_det_Sigma_W_plus_I_d_cov_pars -= c_opt * (sample_P.mean() - tr_PI_P_grad);
-									Log::REInfo("Test %g", sample_P.mean());
-									Log::REInfo("Test %g", c_opt);
+									//Log::REInfo("Test %g", sample_P.mean());
+									//Log::REInfo("Test %g", c_opt);
 								}
-								Log::REInfo("tr final %g", d_log_det_Sigma_W_plus_I_d_cov_pars);
+								//Log::REInfo("tr final %g", d_log_det_Sigma_W_plus_I_d_cov_pars);
 								explicit_derivative += 0.5 * d_log_det_Sigma_W_plus_I_d_cov_pars;
-								Log::REInfo("explicit_derivative %g", explicit_derivative);
+								//Log::REInfo("explicit_derivative %g", explicit_derivative);
 								cov_grad[ipar] = explicit_derivative - SigmaI_plus_W_inv_d_mll_d_mode.dot(SigmaI_deriv_mode);
-								Log::REInfo("SigmaI_plus_W_inv_d_mll_d_mode %g", SigmaI_plus_W_inv_d_mll_d_mode.dot(SigmaI_deriv_mode));
+								//Log::REInfo("SigmaI_plus_W_inv_d_mll_d_mode %g", SigmaI_plus_W_inv_d_mll_d_mode.dot(SigmaI_deriv_mode));
 							}
 						}
 					}
@@ -3697,7 +3689,7 @@ namespace GPBoost {
 								vec_t SigmaI_plus_W_inv_diag_part = (woodbury_SigmaI_plus_W_inv_Bt_D_inv_B_cross_cov_t.cwiseProduct(woodbury_SigmaI_plus_W_inv_Bt_D_inv_B_cross_cov_t)).colwise().sum();
 								SigmaI_plus_W_inv_diag = (SigmaI_plus_W_inv.diagonal().array() + SigmaI_plus_W_inv_diag_part.array()).matrix();
 								d_mll_d_mode = -0.5 * (SigmaI_plus_W_inv_diag.array() * third_deriv.array()).matrix();
-								Log::REInfo("d_mll_d_mode %g", d_mll_d_mode[10]);
+								//Log::REInfo("d_mll_d_mode %g", d_mll_d_mode[10]);
 								vec_t Sigma_d_mll_d_mode_part = B_rm_.transpose().triangularView<Eigen::UpLoType::UnitUpper>().solve(d_mll_d_mode);
 								vec_t Sigma_d_mll_d_mode_part1 = D_inv_B_rm_.triangularView<Eigen::UpLoType::Lower>().solve(Sigma_d_mll_d_mode_part);
 								vec_t Sigma_d_mll_d_mode = Sigma_d_mll_d_mode_part1 + (*cross_cov) * (chol_fact_sigma_ip.solve((*cross_cov).transpose() * d_mll_d_mode));
@@ -3714,15 +3706,15 @@ namespace GPBoost {
 								SigmaI * ((*cross_cov) * chol_fact_sigma_woodbury.solve(sigma_woodbury_grad * chol_fact_sigma_woodbury.solve((*cross_cov).transpose() * SigmaI_mode)));
 							explicit_derivative = 0.5 * (mode_.dot(SigmaI_deriv_mode) + 
 								(SigmaI_deriv.cwiseProduct(SigmaI_plus_W_inv)).sum());
-							Log::REInfo("mode %g", (mode_.dot(SigmaI_deriv_mode)));
+							//Log::REInfo("mode %g", (mode_.dot(SigmaI_deriv_mode)));
 							//if (num_comps_total == 1 && ipar == 0) {
 							//	explicit_derivative += 0.5 * dim_mode_;
 							//}
 							//else {
 								explicit_derivative += 0.5 * (D_inv.diagonal().array() * D_grad[ipar].diagonal().array()).sum();
 							//}
-								Log::REInfo("test1 %g", 0.5 * (D_inv.diagonal().array() * D_grad[ipar].diagonal().array()).sum());
-								Log::REInfo("test1 %g", 0.5 * dim_mode_);
+								//Log::REInfo("test1 %g", 0.5 * (D_inv.diagonal().array() * D_grad[ipar].diagonal().array()).sum());
+								//Log::REInfo("test1 %g", 0.5 * dim_mode_);
 							explicit_derivative -= 0.5 * sigma_ip_inv_sigma_ip_grad.trace();
 							den_mat_t sigma_woodbury_woodbury_grad = sigma_woodbury_grad;
 							den_mat_t Bt_D_inv_B_cross_cov_grad(dim_mode_, num_ip);
@@ -3741,16 +3733,16 @@ namespace GPBoost {
 							}
 							sigma_woodbury_woodbury_grad += Bt_D_inv_B_cross_cov.transpose() * SigmaI_plus_W_invSigmaI_cross_cov;
 							explicit_derivative += 0.5 * (chol_fact_sigma_woodbury_woodbury_.solve(sigma_woodbury_woodbury_grad)).trace();
-							Log::REInfo("explicit_derivative %g", explicit_derivative);
+							//Log::REInfo("explicit_derivative %g", explicit_derivative);
 							cov_grad[par_count] = explicit_derivative - SigmaI_plus_W_inv_d_mll_d_mode.dot(SigmaI_deriv_mode);//add implicit derivative
-							Log::REInfo("tr final %g", (SigmaI_deriv.cwiseProduct(SigmaI_plus_W_inv)).sum() +
-								(chol_fact_sigma_woodbury_woodbury_.solve(sigma_woodbury_woodbury_grad)).trace() + 
-								(D_inv.diagonal().array() * D_grad[ipar].diagonal().array()).sum()-
-								sigma_ip_inv_sigma_ip_grad.trace());
-							Log::REInfo("stoch_tr %g", (SigmaI_deriv.cwiseProduct(SigmaI_plus_W_inv)).sum() + 
-								(chol_fact_sigma_woodbury_woodbury_.solve(sigma_woodbury_woodbury_grad)).trace()-
-								(chol_fact_sigma_woodbury.solve(sigma_woodbury_grad)).trace());
-							Log::REInfo("SigmaI_plus_W_inv_d_mll_d_mode %g", SigmaI_plus_W_inv_d_mll_d_mode.dot(SigmaI_deriv_mode));
+							//Log::REInfo("tr final %g", (SigmaI_deriv.cwiseProduct(SigmaI_plus_W_inv)).sum() +
+								//(chol_fact_sigma_woodbury_woodbury_.solve(sigma_woodbury_woodbury_grad)).trace() + 
+								//(D_inv.diagonal().array() * D_grad[ipar].diagonal().array()).sum()-
+								//sigma_ip_inv_sigma_ip_grad.trace());
+							//Log::REInfo("stoch_tr %g", (SigmaI_deriv.cwiseProduct(SigmaI_plus_W_inv)).sum() + 
+								//(chol_fact_sigma_woodbury_woodbury_.solve(sigma_woodbury_woodbury_grad)).trace()-
+								//(chol_fact_sigma_woodbury.solve(sigma_woodbury_grad)).trace());
+							//Log::REInfo("SigmaI_plus_W_inv_d_mll_d_mode %g", SigmaI_plus_W_inv_d_mll_d_mode.dot(SigmaI_deriv_mode));
 							par_count++;
 						}
 					}
@@ -4035,16 +4027,16 @@ namespace GPBoost {
 						SigmaI_plus_W_inv_d_mll_d_mode = L_inv.transpose() * (L_inv * d_mll_d_mode);
 						vec_t SigmaI_deriv_mode = SigmaI_deriv * mode_;
 						explicit_derivative = 0.5 * (mode_.dot(SigmaI_deriv_mode) + (SigmaI_deriv.cwiseProduct(SigmaI_plus_W_inv)).sum());
-						Log::REInfo("sigmaI_mode %g", mode_.dot(SigmaI_deriv_mode));
-						Log::REInfo("sigmaI_mode %g", (SigmaI_deriv.cwiseProduct(SigmaI_plus_W_inv)).sum());
+						//Log::REInfo("sigmaI_mode %g", mode_.dot(SigmaI_deriv_mode));
+						//Log::REInfo("sigmaI_mode %g", (SigmaI_deriv.cwiseProduct(SigmaI_plus_W_inv)).sum());
 						if (num_comps_total == 1 && j == 0) {
 							explicit_derivative += 0.5 * dim_mode_;
 						}
 						else {
 							explicit_derivative += 0.5 * (D_inv.diagonal().array() * D_grad[j].diagonal().array()).sum();
 						}
-						Log::REInfo("Test %g", explicit_derivative);
-						Log::REInfo("Test %g", SigmaI_plus_W_inv_d_mll_d_mode.dot(SigmaI_deriv_mode));
+						//Log::REInfo("Test %g", explicit_derivative);
+						//Log::REInfo("Test %g", SigmaI_plus_W_inv_d_mll_d_mode.dot(SigmaI_deriv_mode));
 						cov_grad[j] = explicit_derivative - SigmaI_plus_W_inv_d_mll_d_mode.dot(SigmaI_deriv_mode);//add implicit derivative
 					}
 				}//end calc_cov_grad
@@ -4218,15 +4210,15 @@ namespace GPBoost {
 						explicit_derivative = -((*cross_cov_grad).transpose() * a_vec_).dot(sigma_ip_inv_cross_cov_T_a_vec) +
 							0.5 * sigma_ip_inv_cross_cov_T_a_vec.dot(sigma_ip_grad * sigma_ip_inv_cross_cov_T_a_vec) -
 								0.5 * a_vec_.dot(fitc_diag_grad.asDiagonal() * a_vec_);//derivative of mode^T Sigma^-1 mode
-						Log::REInfo("sigmaI_mode %g", -2.*((*cross_cov_grad).transpose() * a_vec_).dot(sigma_ip_inv_cross_cov_T_a_vec) +
-							sigma_ip_inv_cross_cov_T_a_vec.dot(sigma_ip_grad * sigma_ip_inv_cross_cov_T_a_vec) -
-							a_vec_.dot(fitc_diag_grad.asDiagonal() * a_vec_));
+						//Log::REInfo("sigmaI_mode %g", -2.*((*cross_cov_grad).transpose() * a_vec_).dot(sigma_ip_inv_cross_cov_T_a_vec) +
+							//sigma_ip_inv_cross_cov_T_a_vec.dot(sigma_ip_grad * sigma_ip_inv_cross_cov_T_a_vec) -
+							//a_vec_.dot(fitc_diag_grad.asDiagonal() * a_vec_));
 						explicit_derivative += 0.5 * sigma_woodbury_inv_sigma_woodbury_grad.trace() -
 							0.5 * sigma_ip_inv_sigma_ip_grad.trace() +
 							0.5 * fitc_diag_grad.dot(fitc_diag_plus_WI_inv);//derivative of log determinant
-						Log::REInfo("sigmaI_mode %g", sigma_woodbury_inv_sigma_woodbury_grad.trace() -
-							sigma_ip_inv_sigma_ip_grad.trace() +
-							fitc_diag_grad.dot(fitc_diag_plus_WI_inv));
+						//Log::REInfo("sigmaI_mode %g", sigma_woodbury_inv_sigma_woodbury_grad.trace() -
+							//sigma_ip_inv_sigma_ip_grad.trace() +
+							//fitc_diag_grad.dot(fitc_diag_plus_WI_inv));
 
 						// Calculate implicit derivative (through mode) of approx. mariginal log-likelihood
 						vec_t SigmaDeriv_first_deriv_ll = (*cross_cov_grad) * (sigma_ip_inv_cross_cov_T * first_deriv_ll_);
@@ -4237,8 +4229,8 @@ namespace GPBoost {
 						vec_t vaux = chol_fact_dense_Newton_.solve(rhs);
 						vec_t d_mode_d_par = WI.asDiagonal() *
 							(fitc_diag_plus_WI_inv.asDiagonal() * SigmaDeriv_first_deriv_ll - cross_cov_T_fitc_diag_plus_WI_inv.transpose() * vaux);
-						Log::REInfo("Test %g", explicit_derivative);
-						Log::REInfo("Test %g", d_mll_d_mode.dot(d_mode_d_par));
+						//Log::REInfo("Test %g", explicit_derivative);
+						//Log::REInfo("Test %g", d_mll_d_mode.dot(d_mode_d_par));
 						cov_grad[par_count] = explicit_derivative + d_mll_d_mode.dot(d_mode_d_par);
 						////for debugging
 						//if (ipar == 0) {
@@ -4547,6 +4539,9 @@ namespace GPBoost {
 			const den_mat_t& chol_ip_cross_cov,
 			const std::shared_ptr<den_mat_t> cross_cov,
 			const den_mat_t& cross_cov_pred_ip,
+			const den_mat_t& Bt_D_inv_B_cross_cov,
+			const den_mat_t& D_inv_B_cross_cov,
+			const den_mat_t& B_cross_cov,
 			vec_t& pred_mean,
 			T_mat& pred_cov,
 			vec_t& pred_var,
@@ -4557,7 +4552,8 @@ namespace GPBoost {
 			if (calc_mode) {// Calculate mode and Cholesky factor of Sigma^-1 + W at mode
 				double mll;//approximate marginal likelihood. This is a by-product that is not used here.
 				FindModePostRandEffCalcMLLFSAVecchia(y_data, y_data_int, fixed_effects, sigma_ip, chol_fact_sigma_ip, 
-					chol_fact_sigma_woodbury, chol_ip_cross_cov, cross_cov, sigma_woodbury, B, D_inv, false, false, mll);
+					chol_fact_sigma_woodbury, chol_ip_cross_cov, cross_cov, sigma_woodbury, B, D_inv, Bt_D_inv_B_cross_cov, 
+					D_inv_B_cross_cov, B_cross_cov, false, false, mll);
 			}
 			if (na_or_inf_during_last_call_to_find_mode_) {
 				Log::REFatal(NA_OR_INF_ERROR_);
@@ -4566,7 +4562,7 @@ namespace GPBoost {
 			int num_pred = (int)Bp.cols();
 			CHECK((int)Dp.size() == num_pred);
 			sp_mat_t Bt_D_inv = B.transpose() * D_inv;
-			vec_t sigma_inv_mode = mode_ - (*cross_cov) * chol_fact_sigma_woodbury.solve((*cross_cov).transpose() * (Bt_D_inv * (B * mode_)));
+			vec_t sigma_inv_mode = mode_ - (*cross_cov) * chol_fact_sigma_woodbury.solve(Bt_D_inv_B_cross_cov.transpose() * mode_);
 			if (CondObsOnly) {
 				pred_mean = -Bpo * sigma_inv_mode;
 			}
@@ -4574,88 +4570,25 @@ namespace GPBoost {
 				vec_t Bpo_mode = Bpo * sigma_inv_mode;
 				pred_mean = -Bp.triangularView<Eigen::UpLoType::UnitLower>().solve(Bpo_mode);
 			}
-			pred_mean += cross_cov_pred_ip * chol_fact_sigma_ip.solve((*cross_cov).transpose() * (Bt_D_inv * (B * sigma_inv_mode)));
+			pred_mean += cross_cov_pred_ip * chol_fact_sigma_ip.solve(Bt_D_inv_B_cross_cov.transpose() * sigma_inv_mode);
 			if (calc_pred_cov || calc_pred_var) {
-				den_mat_t chol_ip_cross_cov_ip_pred, chol_ip_cross_cov_pred;
-				sp_mat_rm_t Bpo_rm = sp_mat_rm_t(Bpo);
-				den_mat_t Vecchia_cross_cov((*cross_cov).rows(), (*cross_cov).cols());
-				den_mat_t sigma_ip_inv_sigma_cross_cov_pred = chol_fact_sigma_ip.solve(cross_cov_pred_ip.transpose());//TODO
+				den_mat_t chol_ip_cross_cov_pred;
+				den_mat_t sigma_ip_inv_sigma_cross_cov_pred = chol_fact_sigma_ip.solve(cross_cov_pred_ip.transpose());
 				TriangularSolveGivenCholesky<chol_den_mat_t, den_mat_t, den_mat_t, den_mat_t>(chol_fact_sigma_ip,
 					cross_cov_pred_ip.transpose(), chol_ip_cross_cov_pred, false);
-#pragma omp parallel for schedule(static)   
-				for (int i = 0; i < (*cross_cov).cols(); ++i) {
-					Vecchia_cross_cov.col(i) = Bt_D_inv * (B * (*cross_cov).col(i));
-				}
-				den_mat_t cross_cov_PP_Vecchia = chol_ip_cross_cov_pred.transpose() * (chol_ip_cross_cov * Vecchia_cross_cov);
-				den_mat_t cross_cov_pred_obs_pred_inv;
-				den_mat_t B_po_cross_cov(pred_mean.size(), (*cross_cov).cols());
-#pragma omp parallel for schedule(static)   
-				for (int i = 0; i < (*cross_cov).cols(); ++i) {
-					B_po_cross_cov.col(i) = Bpo_rm * (*cross_cov).col(i);
-				}
-				den_mat_t cross_cov_PP_Vecchia_woodbury = chol_fact_sigma_woodbury.solve(cross_cov_PP_Vecchia.transpose());
+				sp_mat_rm_t Bpo_rm = sp_mat_rm_t(Bpo);
 				sp_mat_t Bp_inv_Dp;
 				sp_mat_t Bp_inv(Bp.rows(), Bp.cols());
-				if (CondObsOnly) {
-					if (calc_pred_cov) {
-						pred_cov = Dp.asDiagonal();
-					}
-					if (calc_pred_var) {
-						pred_var = Dp;
-					}
-					cross_cov_pred_obs_pred_inv = B_po_cross_cov;
-				}
-				else {
-					TriangularSolve<sp_mat_t, den_mat_t, den_mat_t>(Bp, B_po_cross_cov, cross_cov_pred_obs_pred_inv, false);
-					Bp_inv.setIdentity();
-					TriangularSolve<sp_mat_t, sp_mat_t, sp_mat_t>(Bp, Bp_inv, Bp_inv, false);
-					Bp_inv_Dp = Bp_inv * Dp.asDiagonal();
-					if (calc_pred_cov) {
-						pred_cov = T_mat(Bp_inv_Dp * Bp_inv.transpose());
-					}
-					if (calc_pred_var) {
-						pred_var.resize(pred_mean.size());
-#pragma omp parallel for schedule(static)
-						for (int i = 0; i < pred_var.size(); ++i) {
-							pred_var[i] = (Bp_inv_Dp.row(i)).dot(Bp_inv.row(i));
-						}
-					}
-				}
-				den_mat_t cross_cov_pred_obs_pred_inv_woodbury = chol_fact_sigma_woodbury.solve(cross_cov_pred_obs_pred_inv.transpose());
-				if (calc_pred_cov) {
-					if (pred_mean.size() > 10000) {
-						Log::REInfo("The computational complexity and the storage of the predictive covariance martix heavily depend on the number of prediction location. "
-							"Therefore, if this number is large we recommend only computing the predictive variances ");
-					}
-					T_mat PP_Part;
-					ConvertTo_T_mat_FromDense<T_mat>(cross_cov_pred_ip * sigma_ip_inv_sigma_cross_cov_pred, PP_Part);
-					T_mat PP_V_Part;
-					ConvertTo_T_mat_FromDense<T_mat>(cross_cov_PP_Vecchia * sigma_ip_inv_sigma_cross_cov_pred, PP_V_Part);
-					T_mat V_Part;
-					ConvertTo_T_mat_FromDense<T_mat>(cross_cov_pred_obs_pred_inv * sigma_ip_inv_sigma_cross_cov_pred, V_Part);
-					T_mat V_Part_t;
-					ConvertTo_T_mat_FromDense<T_mat>(sigma_ip_inv_sigma_cross_cov_pred.transpose() * cross_cov_pred_obs_pred_inv.transpose(), V_Part_t);
-					T_mat PP_V_PP_Part;
-					ConvertTo_T_mat_FromDense<T_mat>(cross_cov_pred_obs_pred_inv * cross_cov_PP_Vecchia_woodbury, PP_V_PP_Part);
-					T_mat PP_V_PP_Part_t;
-					ConvertTo_T_mat_FromDense<T_mat>(cross_cov_PP_Vecchia_woodbury.transpose() * cross_cov_pred_obs_pred_inv.transpose(), PP_V_PP_Part_t);
-					T_mat PP_V_V_Part;
-					ConvertTo_T_mat_FromDense<T_mat>(cross_cov_PP_Vecchia * cross_cov_PP_Vecchia_woodbury, PP_V_V_Part);
-					T_mat V_V_Part;
-					ConvertTo_T_mat_FromDense<T_mat>(cross_cov_pred_obs_pred_inv * cross_cov_pred_obs_pred_inv_woodbury, V_V_Part);
-					pred_cov += PP_Part - PP_V_Part + V_Part + V_Part_t - PP_V_PP_Part + PP_V_V_Part - PP_V_PP_Part_t + V_V_Part;
-				}
-				if (calc_pred_var) {
-#pragma omp parallel for schedule(static)
-					for (int i = 0; i < pred_var.size(); ++i) {
-						pred_var[i] += (cross_cov_pred_ip.row(i) - cross_cov_PP_Vecchia.row(i) +
-							2 * cross_cov_pred_obs_pred_inv.row(i)).dot(sigma_ip_inv_sigma_cross_cov_pred.col(i)) +
-							(cross_cov_PP_Vecchia.row(i) - 2 * cross_cov_pred_obs_pred_inv.row(i)).dot(cross_cov_PP_Vecchia_woodbury.col(i)) +
-							(cross_cov_pred_obs_pred_inv.row(i)).dot(cross_cov_pred_obs_pred_inv_woodbury.col(i));
-					}
-				}
 				//Version Simulation
 				if (matrix_inversion_method_ == "iterative") {
+					den_mat_t cross_cov_PP_Vecchia = chol_ip_cross_cov_pred.transpose() * (chol_ip_cross_cov * Bt_D_inv_B_cross_cov);
+					den_mat_t cross_cov_pred_obs_pred_inv;
+					den_mat_t B_po_cross_cov(pred_mean.size(), (*cross_cov).cols());
+#pragma omp parallel for schedule(static)   
+					for (int i = 0; i < (*cross_cov).cols(); ++i) {
+						B_po_cross_cov.col(i) = Bpo_rm * (*cross_cov).col(i);
+					}
+					den_mat_t cross_cov_PP_Vecchia_woodbury = chol_fact_sigma_woodbury.solve(cross_cov_PP_Vecchia.transpose());
 					sp_mat_rm_t Bp_inv_Dp_rm, Bp_inv_rm;
 					sp_mat_rm_t Bp_rm;
 					sp_mat_rm_t Bp_inv_Bpo_rm; //Bp^(-1) * Bpo 
@@ -4718,7 +4651,7 @@ namespace GPBoost {
 
 							//z_i ~ N(0,Sigma^{-1})
 							vec_t Bt_D_inv_Sigma_sqrt_rand_vec = B_t_D_inv_rm_ * B_rm_ * Sigma_sqrt_rand_vec;
-							vec_t Sigma_inv_Sigma_sqrt_rand_vec = Bt_D_inv_Sigma_sqrt_rand_vec - B_t_D_inv_rm_ * (B_rm_ * ((*cross_cov) * chol_fact_sigma_woodbury.solve((*cross_cov).transpose() * Bt_D_inv_Sigma_sqrt_rand_vec)));
+							vec_t Sigma_inv_Sigma_sqrt_rand_vec = Bt_D_inv_Sigma_sqrt_rand_vec - Bt_D_inv_B_cross_cov * chol_fact_sigma_woodbury.solve((*cross_cov).transpose() * Bt_D_inv_Sigma_sqrt_rand_vec);
 							//z_i ~ N(0,(Sigma^{-1} + W))
 							vec_t rand_vec_pred_SigmaI_plus_W = Sigma_inv_Sigma_sqrt_rand_vec + W_diag_sqrt.cwiseProduct(rand_vec_pred_I_2);
 							vec_t rand_vec_pred_SigmaI_plus_W_inv(dim_mode_);
@@ -4748,10 +4681,9 @@ namespace GPBoost {
 							if (has_NA_or_Inf) {
 								Log::REDebug(CG_NA_OR_INF_WARNING_);
 							}
-							vec_t B_t_D_inv_B_vec = B_t_D_inv_rm_ * (B_rm_ * rand_vec_pred_SigmaI_plus_W_inv);
-							vec_t sigma_woodbury_vec = (*cross_cov) * chol_fact_sigma_woodbury.solve((*cross_cov).transpose()* B_t_D_inv_B_vec);
+							vec_t sigma_woodbury_vec = (*cross_cov) * chol_fact_sigma_woodbury.solve(Bt_D_inv_B_cross_cov.transpose()* rand_vec_pred_SigmaI_plus_W_inv);
 							//z_i ~ N(0, (Sigma_pm Sigma_ip^-1 Sigma_mn - B_p^-1 B_po (B_o^T D_o^-1 B_o)^-1) Sigma^{-1} (Sigma^{-1} + W)^{-1} Sigma^{-1} (Sigma_nm Sigma_ip^-1 Sigma_mp - (B_o^T D_o^-1 B_o)^-1 B_po^T B_p^-1 ))
-							vec_t sigma_pred_sigma_inv_vec = cross_cov_pred_ip * chol_fact_sigma_ip.solve((*cross_cov).transpose() * (B_t_D_inv_B_vec - B_t_D_inv_rm_ * (B_rm_ * sigma_woodbury_vec)));
+							vec_t sigma_pred_sigma_inv_vec = cross_cov_pred_ip * chol_fact_sigma_ip.solve(Bt_D_inv_B_cross_cov.transpose() * (rand_vec_pred_SigmaI_plus_W_inv - sigma_woodbury_vec));
 							vec_t sigma_vecchia_vec = Bp_inv_Bpo_rm * (rand_vec_pred_SigmaI_plus_W_inv - sigma_woodbury_vec);
 							vec_t rand_vec_pred = sigma_pred_sigma_inv_vec - sigma_vecchia_vec;
 							if (calc_pred_cov) {
@@ -4771,6 +4703,13 @@ namespace GPBoost {
 						}
 
 					}
+					if (CondObsOnly) {
+						cross_cov_pred_obs_pred_inv = B_po_cross_cov;
+					}
+					else {
+						TriangularSolve<sp_mat_t, den_mat_t, den_mat_t>(Bp, B_po_cross_cov, cross_cov_pred_obs_pred_inv, false);
+					}
+					den_mat_t cross_cov_pred_obs_pred_inv_woodbury = chol_fact_sigma_woodbury.solve(cross_cov_pred_obs_pred_inv.transpose());
 					if (calc_pred_cov) {
 						pred_cov_dense /= nsim_var_pred_;
 						if (CondObsOnly) {
@@ -4780,6 +4719,27 @@ namespace GPBoost {
 							pred_cov_dense += Bp_inv_Dp_rm * Bp_inv_rm.transpose();
 						}
 						ConvertTo_T_mat_FromDense<T_mat>(pred_cov_dense, pred_cov);
+						if (pred_mean.size() > 10000) {
+							Log::REInfo("The computational complexity and the storage of the predictive covariance martix heavily depend on the number of prediction location. "
+								"Therefore, if this number is large we recommend only computing the predictive variances ");
+						}
+						T_mat PP_Part;
+						ConvertTo_T_mat_FromDense<T_mat>(chol_ip_cross_cov_pred.transpose() * chol_ip_cross_cov_pred, PP_Part);
+						T_mat PP_V_Part;
+						ConvertTo_T_mat_FromDense<T_mat>(cross_cov_PP_Vecchia * sigma_ip_inv_sigma_cross_cov_pred, PP_V_Part);
+						T_mat V_Part;
+						ConvertTo_T_mat_FromDense<T_mat>(cross_cov_pred_obs_pred_inv * sigma_ip_inv_sigma_cross_cov_pred, V_Part);
+						T_mat V_Part_t;
+						ConvertTo_T_mat_FromDense<T_mat>(sigma_ip_inv_sigma_cross_cov_pred.transpose() * cross_cov_pred_obs_pred_inv.transpose(), V_Part_t);
+						T_mat PP_V_PP_Part;
+						ConvertTo_T_mat_FromDense<T_mat>(cross_cov_pred_obs_pred_inv * cross_cov_PP_Vecchia_woodbury, PP_V_PP_Part);
+						T_mat PP_V_PP_Part_t;
+						ConvertTo_T_mat_FromDense<T_mat>(cross_cov_PP_Vecchia_woodbury.transpose() * cross_cov_pred_obs_pred_inv.transpose(), PP_V_PP_Part_t);
+						T_mat PP_V_V_Part;
+						ConvertTo_T_mat_FromDense<T_mat>(cross_cov_PP_Vecchia * cross_cov_PP_Vecchia_woodbury, PP_V_V_Part);
+						T_mat V_V_Part;
+						ConvertTo_T_mat_FromDense<T_mat>(cross_cov_pred_obs_pred_inv * cross_cov_pred_obs_pred_inv_woodbury, V_V_Part);
+						pred_cov += PP_Part - PP_V_Part + V_Part + V_Part_t - PP_V_PP_Part + PP_V_V_Part - PP_V_PP_Part_t + V_V_Part;
 					}
 					if (calc_pred_var) {
 						pred_var /= nsim_var_pred_;
@@ -4799,9 +4759,21 @@ namespace GPBoost {
 					}
 				} //end iterative methods using simulation
 				else {//using Cholesky decomposition
+					den_mat_t sigma_resid_plus_W_inv_cross_cov = chol_fact_SigmaI_plus_ZtWZ_vecchia_.solve(second_deriv_neg_ll_.asDiagonal() * (*cross_cov));
+					den_mat_t sigma_woodbury_2 = (*sigma_ip) + Bt_D_inv_B_cross_cov.transpose() * sigma_resid_plus_W_inv_cross_cov;
+					chol_den_mat_t chol_fact_sigma_woodbury_2;
+					chol_fact_sigma_woodbury_2.compute(sigma_woodbury_2);
+
+					den_mat_t M_aux_1 = sigma_ip_inv_sigma_cross_cov_pred.transpose()* (Bt_D_inv_B_cross_cov.transpose()* sigma_resid_plus_W_inv_cross_cov);
+					den_mat_t M_aux_2 = chol_fact_sigma_woodbury_2.solve(M_aux_1.transpose());
 					sp_mat_t Maux; //Maux = L\(Bpo^T * Bp^-1), L = Chol(Sigma^-1 + W)
+					den_mat_t M_aux_3(pred_mean.size(), (*cross_cov).cols());
 					if (CondObsOnly) {
 						Maux = Bpo.transpose();//Bp = Id
+#pragma omp parallel for schedule(static)   
+						for (int i = 0; i < (*cross_cov).cols(); ++i) {
+							M_aux_3.col(i) = Bpo_rm * sigma_resid_plus_W_inv_cross_cov.col(i);
+						}
 					}
 					else {
 						Bp_inv = sp_mat_t(Bp.rows(), Bp.cols());
@@ -4810,7 +4782,9 @@ namespace GPBoost {
 						//Bp.triangularView<Eigen::UpLoType::UnitLower>().solveInPlace(Bp_inv);//much slower
 						Maux = Bpo.transpose() * Bp_inv.transpose();
 						Bp_inv_Dp = Bp_inv * Dp.asDiagonal();
+						M_aux_3 = Maux.transpose() * sigma_resid_plus_W_inv_cross_cov;
 					}
+					den_mat_t M_aux_4 = chol_fact_sigma_woodbury_2.solve(M_aux_3.transpose());
 					TriangularSolveGivenCholesky<chol_sp_mat_t, sp_mat_t, sp_mat_t, sp_mat_t>(chol_fact_SigmaI_plus_ZtWZ_vecchia_, Maux, Maux, false);
 					if (calc_pred_cov) {
 						if (CondObsOnly) {
@@ -4820,10 +4794,17 @@ namespace GPBoost {
 						else {
 							pred_cov = Bp_inv_Dp * Bp_inv.transpose() + Maux.transpose() * Maux;
 						}
-						T_mat PP_Part;
-						TriangularSolveGivenCholesky<chol_den_mat_t, den_mat_t, den_mat_t, den_mat_t>(chol_fact_sigma_ip, cross_cov_pred_ip.transpose(), chol_ip_cross_cov_ip_pred, false);
-						ConvertTo_T_mat_FromDense<T_mat>(chol_ip_cross_cov_ip_pred.transpose()* chol_ip_cross_cov_ip_pred, PP_Part);
-						pred_cov += PP_Part;
+						T_mat PP_Part, PP_Part1, PP_Part2, PP_Part3, PP_Part3_t, PP_Part4, PP_Part4_t, PP_Part5;
+						ConvertTo_T_mat_FromDense<T_mat>(chol_ip_cross_cov_pred.transpose()* chol_ip_cross_cov_pred, PP_Part);
+						ConvertTo_T_mat_FromDense<T_mat>(M_aux_1* sigma_ip_inv_sigma_cross_cov_pred, PP_Part1);
+						ConvertTo_T_mat_FromDense<T_mat>(M_aux_1* M_aux_2, PP_Part2);
+						ConvertTo_T_mat_FromDense<T_mat>(M_aux_3 * sigma_ip_inv_sigma_cross_cov_pred, PP_Part3);
+						ConvertTo_T_mat_FromDense<T_mat>(sigma_ip_inv_sigma_cross_cov_pred.transpose() * M_aux_3.transpose(), PP_Part3_t);
+						ConvertTo_T_mat_FromDense<T_mat>(M_aux_3 * M_aux_2, PP_Part4);
+						ConvertTo_T_mat_FromDense<T_mat>(M_aux_2.transpose()* M_aux_3.transpose(), PP_Part4_t);
+						ConvertTo_T_mat_FromDense<T_mat>(M_aux_3 * M_aux_4, PP_Part5);
+						ConvertTo_T_mat_FromDense<T_mat>(M_aux_3* M_aux_4, PP_Part5);
+						pred_cov += PP_Part - PP_Part1 + PP_Part2 + PP_Part3 + PP_Part3_t - PP_Part4 - PP_Part4_t + PP_Part5;
 					}
 					if (calc_pred_var) {
 						pred_var = vec_t(num_pred);
@@ -4831,14 +4812,20 @@ namespace GPBoost {
 						if (CondObsOnly) {
 #pragma omp parallel for schedule(static)
 							for (int i = 0; i < num_pred; ++i) {
-								pred_var[i] = Dp[i] + Maux.col(i).sum();
+								pred_var[i] = Dp[i];
 							}
 						}
 						else {
 #pragma omp parallel for schedule(static)
 							for (int i = 0; i < num_pred; ++i) {
-								pred_var[i] = (Bp_inv_Dp.row(i)).dot(Bp_inv.row(i)) + Maux.col(i).sum();
+								pred_var[i] = (Bp_inv_Dp.row(i)).dot(Bp_inv.row(i));
 							}
+						}
+#pragma omp parallel for schedule(static)
+						for (int i = 0; i < num_pred; ++i) {
+							pred_var[i] += Maux.col(i).sum() + chol_ip_cross_cov_pred.col(i).array().square().sum() - sigma_ip_inv_sigma_cross_cov_pred.col(i).dot(M_aux_1.row(i)) +
+								M_aux_2.col(i).dot(M_aux_1.row(i)) + 2 * sigma_ip_inv_sigma_cross_cov_pred.col(i).dot(M_aux_3.row(i)) - 2 * M_aux_2.col(i).dot(M_aux_3.row(i)) +
+								M_aux_4.col(i).dot(M_aux_3.row(i));
 						}
 					}
 				}
@@ -5542,7 +5529,7 @@ namespace GPBoost {
 					log_det_Sigma_W_plus_I += 2. * ((den_mat_t)chol_fact_sigma_woodbury.matrixL()).diagonal().array().log().sum();
 				}
 			}
-			Log::REInfo("logdet %g", log_det_Sigma_W_plus_I);
+			//Log::REInfo("logdet %g", log_det_Sigma_W_plus_I);
 		}//end CalcLogDetStochFSVA
 
 		/*!
@@ -5697,9 +5684,9 @@ namespace GPBoost {
 				//optimal c
 				CalcOptimalCVectorized(Z_WI_plus_Sigma_inv_WI_deriv_PI_Z, Z_PI_P_deriv_PI_Z, tr_WI_plus_Sigma_inv_WI_deriv, tr_PI_P_deriv_vec, c_opt);
 				d_log_det_Sigma_W_plus_I_d_mode += c_opt.cwiseProduct(tr_Sigma_Lk_I_k_plus_Sigma_L_kt_W_Sigma_L_k_inv_Sigma_Lkt_W_deriv - tr_WI_W_deriv) - c_opt.cwiseProduct(tr_PI_P_deriv_vec);
-				Log::REInfo("c_mean %g", c_opt.mean());
-				Log::REInfo("c_max %g", c_opt.maxCoeff());
-				Log::REInfo("c_min %g", c_opt.minCoeff());
+				//Log::REInfo("c_mean %g", c_opt.mean());
+				//Log::REInfo("c_max %g", c_opt.maxCoeff());
+				//Log::REInfo("c_min %g", c_opt.minCoeff());
 			}
 			else if (cg_preconditioner_type_ == "Sigma_inv_plus_BtWB" || cg_preconditioner_type_ == "zero_infill_incomplete_cholesky") {
 				//P^(-1) Z
@@ -5745,12 +5732,12 @@ namespace GPBoost {
 					//optimal c
 					CalcOptimalCVectorized(Z_SigmaI_plus_W_inv_W_deriv_PI_Z, Z_PI_P_deriv_PI_Z, tr_SigmaI_plus_W_inv_W_deriv, tr_PI_P_deriv_vec, c_opt);
 					d_log_det_Sigma_W_plus_I_d_mode += c_opt.cwiseProduct(tr_D_inv_plus_W_inv_W_deriv) - c_opt.cwiseProduct(tr_PI_P_deriv_vec);
-					Log::REInfo("c_mean %g", c_opt.mean());
-					Log::REInfo("c_max %g", c_opt.maxCoeff());
-					Log::REInfo("c_min %g", c_opt.minCoeff());
-					Log::REInfo("mean1 %g", tr_D_inv_plus_W_inv_W_deriv.mean());
-					Log::REInfo("mean1 %g", tr_PI_P_deriv_vec.mean());
-					Log::REInfo("mean1 %g", Z_SigmaI_plus_W_inv_W_deriv_PI_Z.mean());
+					//Log::REInfo("c_mean %g", c_opt.mean());
+					//Log::REInfo("c_max %g", c_opt.maxCoeff());
+					//Log::REInfo("c_min %g", c_opt.minCoeff());
+					//Log::REInfo("mean1 %g", tr_D_inv_plus_W_inv_W_deriv.mean());
+					//Log::REInfo("mean1 %g", tr_PI_P_deriv_vec.mean());
+					//Log::REInfo("mean1 %g", Z_SigmaI_plus_W_inv_W_deriv_PI_Z.mean());
 				}
 			}
 			else {

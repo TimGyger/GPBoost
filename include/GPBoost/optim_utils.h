@@ -140,8 +140,13 @@ namespace GPBoost {
 		else {//!should_print_trace
 			if (should_redetermine_neighbors_vecchia) {
 				re_model_templ_->SetNumIter((int)objfn_data->settings_->opt_iter);
-				if (re_model_templ_->ShouldRedetermineNearestNeighborsVecchia()) {
-					re_model_templ_->RedetermineNearestNeighborsVecchia(); // called only in certain iterations if gp_approx == "vecchia" and neighbors are selected based on correlations and not distances
+				bool force_redermination = false;
+				if ((*gradient)[2] >= 1e30 && (*gradient)[2] <= 1.00000000002e30) {//hack to indicate that convergece has been achieved and nearest neighbors in Vecchia approximation should potentially been redetermined
+					force_redermination = true;
+				}
+				if (re_model_templ_->ShouldRedetermineNearestNeighborsVecchia(force_redermination)) {
+					re_model_templ_->RedetermineNearestNeighborsVecchia(force_redermination); // called only in certain iterations if gp_approx == "vecchia" and neighbors are selected based on correlations and not distances
+					neg_log_likelihood = 1.00000000001e30;//hack to tell the optimizers that the neighbors have indeed been redetermined
 				}
 			} //end should_redetermine_neighbors_vecchia
 			if (calc_likelihood) {
@@ -174,7 +179,7 @@ namespace GPBoost {
 			// Calculate gradient
 			if (gradient && !should_redetermine_neighbors_vecchia) {
 				vec_t grad_cov, grad_beta;
-				re_model_templ_->CalcGradPars(cov_pars, cov_pars[0], objfn_data->learn_cov_aux_pars_, has_covariates, 
+				re_model_templ_->CalcGradPars(cov_pars, cov_pars[0], objfn_data->learn_cov_aux_pars_, has_covariates,
 					grad_cov, grad_beta, gradient_contains_error_var, false, fixed_effects_ptr, false);
 				if (objfn_data->learn_cov_aux_pars_) {
 					(*gradient).segment(0, num_cov_pars_optim) = grad_cov.segment(0, num_cov_pars_optim);
@@ -213,7 +218,7 @@ namespace GPBoost {
 		const double* fixed_effects_;//Externally provided fixed effects component of location parameter (only used for non-Gaussian likelihoods)
 		bool learn_cov_aux_pars_;//Indicates whether covariance and auxiliary parameters are optimized or not
 		vec_t cov_pars_;//vector of covariance parameters (only used in case the covariance parameters are not estimated)
-		bool profile_out_marginal_variance_;// If true, the error variance sigma is profiled ou t(= use closed-form expression for error / nugget variance)
+		bool profile_out_marginal_variance_;// If true, the error variance sigma is profiled out (= use closed-form expression for error / nugget variance)
 		bool profile_out_regression_coef_;// If true, the linear regression coefficients are profiled out (= use closed-form WLS expression)
 
 		EvalLLforLBFGSpp(REModelTemplate<T_mat, T_chol>* re_model_templ,
@@ -280,7 +285,7 @@ namespace GPBoost {
 			}
 			if (!(re_model_templ_->HasCovariates())) {//no covariates
 				fixed_effects_ptr = fixed_effects_;
-			}			
+			}
 			else if (estimate_coef_using_bfgs) {
 				beta = pars.segment(num_cov_pars_optim, num_covariates);
 				re_model_templ_->UpdateFixedEffects(beta, fixed_effects_, fixed_effects_vec); // set y_ to resid = y - X * beta - fixed_effcts for Gaussian likelihood or fixed_effects_vec = fixed_effects_ + X * beta for non-Gaussian likelihoods
@@ -294,7 +299,7 @@ namespace GPBoost {
 						re_model_templ_->ProfileOutCoef(fixed_effects_, fixed_effects_vec);//this sets y_ to resid = y - X*beta - fixed_effcts
 						fixed_effects_ptr = fixed_effects_vec.data();
 					}
-					if(learn_cov_aux_pars_) {
+					if (learn_cov_aux_pars_) {
 						if (profile_out_marginal_variance_) {
 							//calculate yTPsiInvy for profiling out the nugget variance below. Note that the nugget variance used here is irrelvant. The 'neg_log_likelihood' is recalculated below with the correct sigma2
 							if (estimate_coef_using_wls) {
@@ -371,18 +376,34 @@ namespace GPBoost {
 		}
 
 		/*!
+		* \brief Write the current values of profiled-out variables (if there are any such as nugget effects, regression coefficients) to their lag1 variables
+		*/
+		void SetLag1ProfiledOutVariables() {
+			re_model_templ_->SetLag1ProfiledOutVariables(profile_out_marginal_variance_, profile_out_regression_coef_);
+		}
+
+		/*!
+		* \brief Reset the profiled-out variables (if there are any such as nugget effects, regression coefficients) to their lag1 variables
+		*/
+		void ResetProfiledOutVariablesToLag1() {
+			re_model_templ_->ResetProfiledOutVariablesToLag1(profile_out_marginal_variance_, profile_out_regression_coef_);
+		}
+
+		/*!
 		* \brief Indicates whether correlation-based nearest neighbors for Vecchia approximation should be updated
+		* \param force_redermination If true, the neighbors are redetermined if applicaple irrespective of num_iter_
 		* \return True, if nearest neighbors have been redetermined
 		*/
-		bool ShouldRedetermineNearestNeighborsVecchia() {
-			return(re_model_templ_->ShouldRedetermineNearestNeighborsVecchia());
+		bool ShouldRedetermineNearestNeighborsVecchia(bool force_redermination) {
+			return(re_model_templ_->ShouldRedetermineNearestNeighborsVecchia(force_redermination));
 		}
 
 		/*!
 		* \brief Redetermine correlation-based nearest neighbors for Vecchia approximation
+		* \param force_redermination If true, the neighbors are redetermined if applicaple irrespective of num_iter_
 		*/
-		void RedetermineNearestNeighborsVecchia() {
-			re_model_templ_->RedetermineNearestNeighborsVecchia();
+		void RedetermineNearestNeighborsVecchia(bool force_redermination) {
+			re_model_templ_->RedetermineNearestNeighborsVecchia(force_redermination);
 		}
 
 		/*!
@@ -443,7 +464,7 @@ namespace GPBoost {
 			if (estimate_coef_using_bfgs) {
 				beta = pars.segment(num_cov_pars_optim, num_covariates);
 			}
-			else if(estimate_coef_using_wls){
+			else if (estimate_coef_using_wls) {
 				re_model_templ_->GetBeta(beta);
 			}
 			Log::REDebug("GPModel: parameters after optimization iteration number %d: ", iter);
@@ -522,6 +543,7 @@ namespace GPBoost {
 	* \param aux_pars Pointer to aux_pars_ in likelihoods.h
 	* \param has_covariates If true, the model linearly incluses covariates
 	* \param initial_step_factor Only for 'lbfgs': The initial step length in the first iteration is this factor divided by the search direction (i.e. gradient)
+	* \param reuse_m_bfgs_from_previous_call If true, the approximate Hessian for the LBFGS are kept at the values from a previous call and not re-initialized (applies only to LBFGSSolver)
 	*/
 	template<typename T_mat, typename T_chol>
 	void OptimExternal(REModelTemplate<T_mat, T_chol>* re_model_templ,
@@ -541,7 +563,8 @@ namespace GPBoost {
 		int nb_aux_pars,
 		const double* aux_pars,
 		bool has_covariates,
-		double initial_step_factor) {
+		double initial_step_factor,
+		bool reuse_m_bfgs_from_previous_call) {
 		// Some checks
 		if (re_model_templ->EstimateAuxPars()) {
 			CHECK(num_cov_par + nb_aux_pars == (int)cov_pars.size());
@@ -590,7 +613,7 @@ namespace GPBoost {
 		//Do optimization
 		optim::algo_settings_t settings;
 		settings.iter_max = max_iter;
-		OptDataOptimLib<T_mat, T_chol> 	opt_data = OptDataOptimLib<T_mat, T_chol>(re_model_templ, fixed_effects, learn_cov_aux_pars,
+		OptDataOptimLib<T_mat, T_chol> opt_data = OptDataOptimLib<T_mat, T_chol>(re_model_templ, fixed_effects, learn_cov_aux_pars,
 			cov_pars.segment(0, num_cov_par), profile_out_marginal_variance, &settings, optimizer);
 		if (convergence_criterion == "relative_change_in_parameters") {
 			settings.rel_sol_change_tol = delta_rel_conv;
@@ -613,10 +636,10 @@ namespace GPBoost {
 		else if (optimizer == "lbfgs" || optimizer == "lbfgs_linesearch_nocedal_wright") {
 			LBFGSpp::LBFGSParam<double> param_LBFGSpp;
 			param_LBFGSpp.max_iterations = max_iter;
-			param_LBFGSpp.past = 1;//convergence should be determined by checking the change in the obejctive function and not the norm of the gradient
-			param_LBFGSpp.delta = delta_rel_conv;
-			param_LBFGSpp.epsilon = 1e-10;
-			param_LBFGSpp.epsilon_rel = 1e-10;
+			param_LBFGSpp.past = 1;//convergence should be determined by checking the change in the objective function and not the norm of the gradient
+			param_LBFGSpp.delta = delta_rel_conv;//tolerence for relative change in objective function as convergence chec
+			param_LBFGSpp.epsilon = 1e-10;//tolerance for norm of gradient as convergence check
+			param_LBFGSpp.epsilon_rel = 1e-10;//tolerance for norm of gradient relative to norm of parameters as convergence check
 			param_LBFGSpp.max_linesearch = 20;
 			param_LBFGSpp.m = 6;
 			param_LBFGSpp.initial_step_factor = initial_step_factor;
@@ -625,21 +648,25 @@ namespace GPBoost {
 			if (optimizer == "lbfgs") {
 				param_LBFGSpp.linesearch = 1;//LBFGS_LINESEARCH_BACKTRACKING_ARMIJO
 				LBFGSpp::LBFGSSolver<double, LBFGSpp::LineSearchBacktracking> solver(param_LBFGSpp);
-				num_it = solver.minimize(ll_fun, pars_init, neg_log_likelihood);
+				num_it = solver.minimize(ll_fun, pars_init, neg_log_likelihood, reuse_m_bfgs_from_previous_call, re_model_templ->GetMBFGS());
 			}
 			else if (optimizer == "lbfgs_linesearch_nocedal_wright") {
 				param_LBFGSpp.linesearch = 3;//LBFGS_LINESEARCH_BACKTRACKING_STRONG_WOLFE
 				LBFGSpp::LBFGSSolver<double, LBFGSpp::LineSearchNocedalWright> solver(param_LBFGSpp);
-				num_it = solver.minimize(ll_fun, pars_init, neg_log_likelihood);
+				num_it = solver.minimize(ll_fun, pars_init, neg_log_likelihood, reuse_m_bfgs_from_previous_call, re_model_templ->GetMBFGS());
 			}
 		}
 		//else if (optimizer == "adadelta") {// adadelta currently not supported as default settings do not always work
 		//	settings.gd_settings.method = 5;
 		//	optim::gd(pars_init, EvalLLforOptimLib<T_mat, T_chol>, &opt_data, settings);
 		//}
-		if (optimizer != "lbfgs" && optimizer != "lbfgs_linesearch_nocedal_wright") {
+		if (optimizer != "lbfgs" && optimizer != "lbfgs_linesearch_nocedal_wright") {//only for optimizers from OptimLib
 			num_it = (int)settings.opt_iter;
 			neg_log_likelihood = settings.opt_fn_value;
+			if (profile_out_marginal_variance || profile_out_regression_coef) {
+				vec_t grad_dummy = pars_init;
+				EvalLLforOptimLib<T_mat, T_chol>(pars_init, &grad_dummy, &opt_data);//re-evaluate log-likelihood to make sure that the profiled-out variables are correct
+			}
 		}
 		// Transform parameters back for export
 		if (learn_cov_aux_pars) {
