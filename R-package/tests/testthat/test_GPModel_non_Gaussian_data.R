@@ -3048,6 +3048,85 @@ if(Sys.getenv("GPBOOST_ALL_TESTS") == "GPBOOST_ALL_TESTS"){
     expect_lt(abs(gp_model$get_current_neg_log_likelihood()-nll_opt), 0.2)
     
     ##############
+    ## With FSVecchia approximation
+    ##############
+    
+    ##### with all neighbors and 60 inducing points
+    # Evaluate negative log-likelihood
+    capture.output( gp_model <- GPModel(gp_coords = coords_ARD, likelihood = likelihood,seed = 2,
+                                        cov_function = "matern_ard", cov_fct_shape = 0.5,num_ind_points = 60,
+                                        gp_approx = "vecchia", num_neighbors = n-1, vecchia_ordering = "none"), 
+                    file='NUL')
+    nll <- gp_model$neg_log_likelihood(cov_pars=cov_pars_nll,y=y)
+    expect_lt(abs(nll-nll_exp),TOLERANCE_STRICT)
+    # Fit model
+    capture.output( gp_model <- fitGPModel(gp_coords = coords_ARD, likelihood = likelihood, seed = 2,
+                                           cov_function = "matern_ard", cov_fct_shape = 0.5,num_ind_points = 60,
+                                           gp_approx = "vecchia", num_neighbors = n-1, vecchia_ordering = "none",
+                                           y = y, X=X, params = params), 
+                    file='NUL')
+    expect_lt(sum(abs(as.vector(gp_model$get_cov_pars())-cov_pars)),TOLERANCE_MEDIUM)
+    expect_lt(sum(abs(as.vector(gp_model$get_coef())-coef)),TOLERANCE_MEDIUM)
+    expect_equal(gp_model$get_num_optim_iter(), nrounds)
+    # Prediction
+    gp_model$set_prediction_data(vecchia_pred_type = "order_obs_first_cond_all", num_neighbors_pred=n+2)
+    pred <- predict(gp_model, gp_coords_pred = coord_test, predict_response = FALSE,
+                    X_pred = X_test, predict_var = TRUE, cov_pars = cov_pars_pred)
+    expect_lt(sum(abs(pred$mu-expected_mu)),TOLERANCE_MEDIUM)
+    expect_lt(sum(abs(as.vector(pred$var)-expected_cov[c(1,5,9)])),TOLERANCE_STRICT)
+    gp_model$set_prediction_data(vecchia_pred_type = "order_obs_first_cond_obs_only", num_neighbors_pred=n)
+    pred <- predict(gp_model, gp_coords_pred = coord_test, predict_response = FALSE,
+                    X_pred = X_test, predict_var = TRUE, cov_pars = cov_pars_pred)
+    expect_lt(sum(abs(pred$mu-expected_mu)),TOLERANCE_MEDIUM)
+    expect_lt(sum(abs(as.vector(pred$var)-expected_cov[c(1,5,9)])),TOLERANCE_STRICT)
+    
+    ## Less neighbors 
+    for(inv_method in c("cholesky", "iterative")){
+      if(inv_method == "iterative"){
+        tolerance_loc <- TOLERANCE_ITERATIVE
+        params <- c(params, list(cg_preconditioner_type = "predictive_process_plus_diagonal", 
+                                 piv_chol_rank = 10, cg_delta_conv = 0.00001,
+                                 num_rand_vec_trace = 50))
+      } else{
+        tolerance_loc <- TOLERANCE_STRICT
+      }
+      nsim_var_pred <- 10000
+      # Evaluate negative log-likelihood
+      capture.output( gp_model <- GPModel(gp_coords = coords_ARD, likelihood = likelihood, seed = 2,
+                                          cov_function = "matern_ard", cov_fct_shape = 0.5,num_ind_points = 50,matrix_inversion_method = inv_method,
+                                          gp_approx = "vecchia", num_neighbors = 20, vecchia_ordering = "none"), 
+                      file='NUL')
+      
+      gp_model$set_optim_params(params = params)
+      nll <- gp_model$neg_log_likelihood(cov_pars=cov_pars_nll,y=y)
+      expect_lt(abs(nll-69.7023523766866),tolerance_loc)
+      # Fit model
+      capture.output( gp_model <- fitGPModel(gp_coords = coords_ARD, likelihood = likelihood, cov_function = "matern_ard", cov_fct_shape = 0.5,
+                                             gp_approx = "vecchia", num_ind_points = 50, num_neighbors = 20, vecchia_ordering = "none", seed = 2,
+                                             y = y, X=X, params = params,matrix_inversion_method = inv_method), 
+                      file='NUL')
+      cov_pars_nn <- c(0.19505953, 0.06747341, 0.03349352, 0.15767601)
+      coef_nn <- c(-0.2700885, 0.1613812)
+      nrounds_nn <- 24
+      nll_opt_nn <- 68.41043
+      expect_lt(sum(abs(as.vector(gp_model$get_cov_pars())-cov_pars_nn)),tolerance_loc)
+      expect_lt(sum(abs(as.vector(gp_model$get_coef())-coef_nn)),tolerance_loc)
+      if (inv_method == "cholesky"){
+        expect_equal(gp_model$get_num_optim_iter(), nrounds_nn)
+      }
+      expect_lt(abs(gp_model$get_current_neg_log_likelihood()-nll_opt_nn), tolerance_loc)
+      # Prediction
+      gp_model$set_prediction_data(num_neighbors_pred=20, nsim_var_pred=nsim_var_pred)
+      pred <- predict(gp_model, gp_coords_pred = coord_test, predict_response = FALSE,
+                      X_pred = X_test, predict_var = TRUE, cov_pars = cov_pars_pred)
+      expected_mu_nn <- c(-0.270088515, 0.055527154, 0.004795484)
+      expected_var_nn <- c(0.5625000, 0.4938483, 0.4862346)
+      expect_lt(sum(abs(pred$mu-expected_mu_nn)),tolerance_loc)
+      expect_lt(sum(abs(as.vector(pred$var)-expected_var_nn)),tolerance_loc)
+    }
+    
+    
+    ##############
     ## Multiple observations at the same location
     ##############
     coords_ARD_mult = coords_ARD

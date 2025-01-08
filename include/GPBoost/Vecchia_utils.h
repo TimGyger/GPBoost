@@ -12,8 +12,81 @@
 #include <GPBoost/type_defs.h>
 #include <GPBoost/re_comp.h>
 #include <GPBoost/utils.h>
+#include <vector>
+#include <algorithm>
 
 namespace GPBoost {
+
+	void distances_funct(const int& coord_ind_i,
+		const std::vector<int>& coords_ind_j,
+		const den_mat_t& coords,
+		const vec_t& corr_diag,
+		const den_mat_t& chol_ip_cross_cov,
+		std::vector<std::shared_ptr<RECompGP<den_mat_t>>>& re_comps_vecchia_cluster_i,
+		vec_t& distances,
+		string_t dist_function,
+		bool distances_saved);
+
+	void CoverTree_kNN(const den_mat_t& coords_mat,
+		const den_mat_t& chol_ip_cross_cov,
+		const vec_t& corr_diag,
+		const double base,
+		const int start,
+		std::vector<std::shared_ptr<RECompGP<den_mat_t>>>& re_comps_vecchia_cluster_i,
+		std::map<int, std::vector<int>>& cover_tree,
+		int& level,
+		bool distances_saved,
+		string_t dist_function);
+
+	void find_kNN_CoverTree(const int i,
+		const int k,
+		const int levels,
+		const bool distances_saved,
+		const double base,
+		const den_mat_t& coords,
+		const den_mat_t& chol_ip_cross_cov,
+		const vec_t& corr_diag,
+		std::vector<std::shared_ptr<RECompGP<den_mat_t>>>& re_comps_vecchia_cluster_i,
+		std::vector<int>& neighbors_i,
+		std::vector<double>& dist_of_neighbors_i,
+		std::map<int, std::vector<int>>& cover_tree,
+		string_t dist_function);
+
+	/*!
+	* \brief Finds the nearest_neighbors among the previous observations using the fast mean-distance-ordered nn search by Ra and Kim (1993)
+	* \param coords Coordinates of observations
+	* \param num_data Number of observations
+	* \param num_neighbors Maximal number of neighbors
+	* \param chol_ip_cross_cov inverse of Cholesky factor of inducing point matrix times cross covariance: Sigma_ip^-1/2 Sigma_cross_cov
+	* \param re_comps_vecchia_cluster_i Container that collects the individual component models
+	* \param[out] neighbors Vector with indices of neighbors for every observations (length = num_data - start_at)
+	* \param[out] dist_obs_neighbors Distances needed for the Vecchia approximation: distances between locations and their neighbors (length = num_data - start_at)
+	* \param[out] dist_between_neighbors Distances needed for the Vecchia approximation: distances between all neighbors (length = num_data - start_at)
+	* \param start_at Index of first point for which neighbors should be found (useful for prediction, otherwise = 0)
+	* \param end_search_at Index of last point which can be a neighbor (useful for prediction when the neighbors are only to be found among the observed data, otherwise = num_data - 1 (if end_search_at < 0, we set end_search_at = num_data - 1)
+	* \param[out] check_has_duplicates If true, it is checked whether there are duplicates in coords among the neighbors (result written on output)
+	* \param neighbor_selection The way how neighbors are selected
+	* \param gen RNG
+	* \param save_distances If true, distances are saved in dist_obs_neighbors and dist_between_neighbors
+	* \param clusters index of the inducing point each data point is closest to
+	*/
+	void find_nearest_neighbors_Vecchia_FSA_fast(const den_mat_t& coords,
+		int num_data,
+		int num_neighbors,
+		den_mat_t& chol_ip_cross_cov,
+		std::vector<std::shared_ptr<RECompGP<den_mat_t>>>& re_comps_vecchia_cluster_i,
+		std::vector<std::vector<int>>& neighbors,
+		std::vector<den_mat_t>& dist_obs_neighbors,
+		std::vector<den_mat_t>& dist_between_neighbors,
+		int start_at,
+		int end_search_at,
+		bool& check_has_duplicates,
+		RNG_t& gen,
+		bool save_distances,
+		double base,
+		bool prediction,
+		bool cond_on_all,
+		const int& num_data_obs);
 
 	/*!
 	* \brief Finds the nearest_neighbors among the previous observations
@@ -76,18 +149,18 @@ namespace GPBoost {
 	* \param num_data_per_cluster Keys: Labels of independent realizations of REs/GPs, values: number of data points per independent realization
 	* \param gp_coords_data Coordinates (features) for Gaussian process
 	* \param gp_rand_coef_data Covariate data for Gaussian process random coefficients
-	* \param[out] re_comps_vecchia_cluster_i Container that collects the individual component models
+	* \param[out] re_comps_cluster_i Container that collects the individual component models
 	* \param[out] nearest_neighbors_cluster_i Collects indices of nearest neighbors
 	* \param[out] dist_obs_neighbors_cluster_i Distances between locations and their nearest neighbors
 	* \param[out] dist_between_neighbors_cluster_i Distances between nearest neighbors for all locations
 	* \param[out] entries_init_B_cluster_i Triplets for initializing the matrices B
+	* \param[out] entries_init_B_grad_cluster_i Triplets for initializing the matrices B_grad
 	* \param[out] z_outer_z_obs_neighbors_cluster_i Outer product of covariate vector at observations and neighbors with itself for random coefficients. First index = data point i, second index = GP number j
 	* \param[out] only_one_GP_calculations_on_RE_scale
 	* \param[out] has_duplicates_coords If true, there are duplicates in coords among the neighbors (currently only used for the Vecchia approximation for non-Gaussian likelihoods)
 	* \param vecchia_ordering Ordering used in the Vecchia approximation. "none" = no ordering, "random" = random ordering
 	* \param num_neighbors The number of neighbors used in the Vecchia approximation
 	* \param vecchia_neighbor_selection The way how neighbors are selected
-	* \param check_has_duplicates If true, it is checked whether there are duplicate locations
 	* \param rng Random number generator
 	* \param num_gp_rand_coef Number of random coefficient GPs
 	* \param num_gp_total Total number of GPs (random intercepts plus random coefficients)
@@ -98,7 +171,9 @@ namespace GPBoost {
 	* \param cov_fct_taper_range Range parameter of the Wendland covariance function and Wendland correlation taper function. We follow the notation of Bevilacqua et al. (2019, AOS)
 	* \param cov_fct_taper_shape Shape parameter of the Wendland covariance function and Wendland correlation taper function. We follow the notation of Bevilacqua et al. (2019, AOS)
 	* \param apply_tapering If true, tapering is applied to the covariance function (element-wise multiplication with a compactly supported Wendland correlation function)
-	* \param save_distances_isotropic_cov_fct If true, distances among points and neighbors are saved for Vecchia approximations for isotropic covariance functions
+	* \param chol_ip_cross_cov sigma_ip^-1/2 * sigma_cross_cov
+	* \param gp_approx Gaussian process approximation
+	* \param clusters index of the inducing point each data point is closest to
 	*/
 	void CreateREComponentsVecchia(data_size_t num_data,
 		int dim_gp_coords,
@@ -129,20 +204,23 @@ namespace GPBoost {
 		double cov_fct_taper_range,
 		double cov_fct_taper_shape,
 		bool apply_tapering,
-		bool save_distances_isotropic_cov_fct);
+		bool save_distances_isotropic_cov_fct,
+		string_t& gp_approx);
 
 	/*!
-	* \brief Update the nearest neighbors based on scaled coorrdinates
-	* \param[out] re_comps_vecchia_cluster_i Container that collects the individual component models
+	* \brief Update the nearest neighbors based on scaled coordinates
+	* \param[out] re_comps_cluster_i Container that collects the individual component models
 	* \param[out] nearest_neighbors_cluster_i Collects indices of nearest neighbors
 	* \param[out] entries_init_B_cluster_i Triplets for initializing the matrices B
+	* \param[out] entries_init_B_grad_cluster_i Triplets for initializing the matrices B_grad
 	* \param num_neighbors The number of neighbors used in the Vecchia approximation
 	* \param vecchia_neighbor_selection The way how neighbors are selected
 	* \param rng Random number generator
-	* \param ind_intercept_gp Index in the vector of random effect components (in the values of 're_comps_vecchia') of the intercept GP associated with the random coefficient GPs
-	* \param[out] has_duplicates_coords If true, there are duplicates in coords among the neighbors (currently only used for the Vecchia approximation for non-Gaussian likelihoods)
-	* \param check_has_duplicates If true, it is checked whether there are duplicate locations
-	* \param gauss_likelihood If true, the response variables have a Gaussian likelihood, otherwise not
+	* \param ind_intercept_gp Index in the vector of random effect components (in the values of 're_comps') of the intercept GP associated with the random coefficient GPs
+	* \param gp_approx Gaussian process approximation
+	* \param chol_ip_cross_cov inverse of Cholesky factor of inducing point matrix times cross covariance: Sigma_ip^-1/2 Sigma_cross_cov
+	* \param[out] dist_obs_neighbors Distances needed for the Vecchia approximation: distances between locations and their neighbors (length = num_data - start_at)
+	* \param[out] dist_between_neighbors Distances needed for the Vecchia approximation: distances between all neighbors (length = num_data - start_at)
 	*/
 	void UpdateNearestNeighbors(std::vector<std::shared_ptr<RECompGP<den_mat_t>>>& re_comps_vecchia_cluster_i,
 		std::vector<std::vector<int>>& nearest_neighbors_cluster_i,
@@ -153,18 +231,23 @@ namespace GPBoost {
 		int ind_intercept_gp,
 		bool& has_duplicates_coords,
 		bool check_has_duplicates,
-		bool gauss_likelihood);
+		bool gauss_likelihood,
+		string_t& gp_approx,
+		den_mat_t& chol_ip_cross_cov,
+		std::vector<den_mat_t>& dist_obs_neighbors_cluster_i,
+		std::vector<den_mat_t>& dist_between_neighbors_cluster_i,
+		bool save_distances_isotropic_cov_fct);
 
 	/*!
-	* \brief Calculate matrices A and D_inv and their derivatives for the Vecchia approximation for one cluster (independent realization of GP)
+	* \brief Calculate matrices A and D_inv as well as their derivatives for the Vecchia approximation for one cluster (independent realization of GP)
 	* \param num_re_cluster_i Number of random effects
-	* \param calc_cov_factor If true, A and D_inv are calculated
-	* \param calc_gradient If true, gradient are calculated
-	* \param re_comps_vecchia_cluster_i Container that collects the individual component models
+	* \param calc_gradient If true, the gradient also be calculated (only for Vecchia approximation)
+	* \param re_comps_cluster_i Container that collects the individual component models
 	* \param nearest_neighbors_cluster_i Collects indices of nearest neighbors
 	* \param dist_obs_neighbors_cluster_i Distances between locations and their nearest neighbors
 	* \param dist_between_neighbors_cluster_i Distances between nearest neighbors for all locations
 	* \param entries_init_B_cluster_i Triplets for initializing the matrices B
+	* \param entries_init_B_grad_cluster_i Triplets for initializing the matrices B_grad
 	* \param z_outer_z_obs_neighbors_cluster_i Outer product of covariate vector at observations and neighbors with itself for random coefficients. First index = data point i, second index = GP number j
 	* \param[out] B_cluster_i Matrix A = I - B (= Cholesky factor of inverse covariance) for Vecchia approximation
 	* \param[out] D_inv_cluster_i Diagonal matrices D^-1 for Vecchia approximation
@@ -174,14 +257,17 @@ namespace GPBoost {
 	* \param nugget_var Nugget effect variance parameter sigma^2 (used only if transf_scale = false to transform back)
 	* \param calc_gradient_nugget If true, derivatives are also taken with respect to the nugget / noise variance
 	* \param num_gp_total Total number of GPs (random intercepts plus random coefficients)
-	* \param ind_intercept_gp Index in the vector of random effect components (in the values of 're_comps_vecchia') of the intercept GP associated with the random coefficient GPs
+	* \param ind_intercept_gp Index in the vector of random effect components (in the values of 're_comps') of the intercept GP associated with the random coefficient GPs
 	* \param gauss_likelihood If true, the response variables have a Gaussian likelihood, otherwise not
-	* \param save_distances_isotropic_cov_fct If true, distances among points and neighbors are saved for Vecchia approximations for isotropic covariance functions
 	*/
 	void CalcCovFactorGradientVecchia(data_size_t num_re_cluster_i,
 		bool calc_cov_factor,
 		bool calc_gradient,
 		const std::vector<std::shared_ptr<RECompGP<den_mat_t>>>& re_comps_vecchia_cluster_i,
+		const std::vector<std::shared_ptr<RECompGP<den_mat_t>>>& re_comps_cross_cov_cluster_i,
+		const std::vector<std::shared_ptr<RECompGP<den_mat_t>>>& re_comps_ip_cluster_i,
+		const chol_den_mat_t& chol_fact_sigma_ip_cluster_i,
+		const den_mat_t& chol_ip_cross_cov_cluster_i,
 		const std::vector<std::vector<int>>& nearest_neighbors_cluster_i,
 		const std::vector<den_mat_t>& dist_obs_neighbors_cluster_i,
 		const std::vector<den_mat_t>& dist_between_neighbors_cluster_i,
@@ -191,13 +277,17 @@ namespace GPBoost {
 		sp_mat_t& D_inv_cluster_i,
 		std::vector<sp_mat_t>& B_grad_cluster_i,
 		std::vector<sp_mat_t>& D_grad_cluster_i,
+		den_mat_t& sigma_ip_inv_cross_cov_T_cluster_i,
+		std::vector<den_mat_t>& sigma_ip_grad_sigma_ip_inv_cross_cov_T_cluster_i,
 		bool transf_scale,
 		double nugget_var,
 		bool calc_gradient_nugget,
 		int num_gp_total,
 		int ind_intercept_gp,
 		bool gauss_likelihood,
-		bool save_distances_isotropic_cov_fct);
+		bool save_distances_isotropic_cov_fct,
+		string_t& gp_approx,
+		const string_t& vecchia_neighbor_selection);
 
 	/*!
 	* \brief Calculate predictions (conditional mean and covariance matrix) using the Vecchia approximation for the covariance matrix of the observable process when observed locations appear first in the ordering
@@ -230,10 +320,18 @@ namespace GPBoost {
 	void CalcPredVecchiaObservedFirstOrder(bool CondObsOnly,
 		data_size_t cluster_i,
 		int num_data_pred,
+		const std::vector<std::shared_ptr<RECompGP<den_mat_t>>>& re_comps_cross_cov_cluster_i,
+		const chol_den_mat_t& chol_fact_sigma_ip_cluster_i,
+		const chol_den_mat_t& chol_fact_sigma_woodbury_cluster_i,
+		den_mat_t& cross_cov_pred_ip,
+		const sp_mat_rm_t& B_cluster_i,
+		const sp_mat_rm_t& Bt_D_inv_cluster_i,
+		const vec_t& y_aux_cluster_i,
 		std::map<data_size_t, std::vector<int>>& data_indices_per_cluster_pred,
 		const den_mat_t& gp_coords_mat_obs,
 		const den_mat_t& gp_coords_mat_pred,
 		const double* gp_rand_coef_data_pred,
+		const den_mat_t& gp_coords_mat_ip,
 		int num_neighbors_pred,
 		const string_t& vecchia_neighbor_selection,
 		std::map<data_size_t, std::vector<std::shared_ptr<RECompGP<den_mat_t>>>>& re_comps_vecchia,
@@ -251,7 +349,8 @@ namespace GPBoost {
 		sp_mat_t& Bpo,
 		sp_mat_t& Bp,
 		vec_t& Dp,
-		bool save_distances_isotropic_cov_fct);
+		bool save_distances_isotropic_cov_fct,
+		string_t& gp_approx);
 
 	/*!
 	* \brief Calculate predictions (conditional mean and covariance matrix) using the Vecchia approximation for the covariance matrix of the observable proces when prediction locations appear first in the ordering
