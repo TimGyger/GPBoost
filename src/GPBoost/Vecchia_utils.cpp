@@ -479,7 +479,7 @@ namespace GPBoost {
 					CoverTree_kNN(coords_ct, chol_ip_cross_cov, corr_diag, base, 0, re_comps_vecchia_cluster_i, cover_trees[0],
 						level, save_distances, dist_function);
 				}
-#pragma omp parallel for schedule(static)
+#pragma omp parallel for schedule(dynamic)
 				for (int i = brute_force_threshold; i < num_data; ++i) {
 					if (num_threads != 1) {
 						std::map<int, std::vector<int>> neighbors_per_tree;
@@ -543,12 +543,6 @@ namespace GPBoost {
 							coords, chol_ip_cross_cov, corr_diag, re_comps_vecchia_cluster_i,
 							neighbors[i - start_at], dist_dummy, cover_trees[0], dist_function);
 					}
-
-					if (i == 1010) {
-						for (int ii = 0; ii < std::min(num_neighbors, 10); ii++) {
-							Log::REInfo("knn %i %i", ii, neighbors[i - start_at][ii]);
-						}
-					}
 					//Save distances between points and neighbors
 					if (save_distances) {
 						dist_obs_neighbors[i - start_at].resize(num_neighbors, 1);
@@ -567,40 +561,6 @@ namespace GPBoost {
 							}
 						}//end check_has_duplicates
 					}
-				}
-			}
-		}
-		if (1010 < (int)(coords.rows())) {
-			int i = 1010;
-			if (true) {
-				std::vector<double> distances_vec;
-				vec_t ind_vec(num_data);
-				den_mat_t coords_i;
-				std::vector<int> indi{ i };
-				coords_i = coords(indi, Eigen::all);
-				for (int jj = 0; jj < i; ++jj) {
-					double dij = 0.;
-					std::vector<int> indj{ jj };
-					vec_t dist_ij(1);
-					distances_funct(i, indj, coords, corr_diag, chol_ip_cross_cov,
-						re_comps_vecchia_cluster_i, dist_ij, dist_function, save_distances);
-					distances_vec.push_back((double)dist_ij[0]);
-					ind_vec[jj] = jj;
-				}
-				std::vector<int> sort_vect(distances_vec.size());
-				SortIndeces<double>(distances_vec, sort_vect);
-				int num_k = 0;
-				int ind_i = 0;
-				while (num_k < std::min(num_neighbors, 10)) {
-					if (sort_vect[ind_i] < i) {
-						if (i == 1010) {
-							Log::REInfo("knn true %i %i %g %g %g", ind_i, sort_vect[ind_i],
-								coords.coeffRef(sort_vect[ind_i], 0),
-								coords.coeffRef(sort_vect[ind_i], 1), distances_vec[sort_vect[ind_i]]);
-						}
-						num_k += 1;
-					}
-					ind_i += 1;
 				}
 			}
 		}

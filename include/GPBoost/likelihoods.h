@@ -3180,7 +3180,7 @@ namespace GPBoost {
 			// Initialize objective function (LA approx. marginal likelihood) for use as convergence criterion
 			approx_marginal_ll = -0.5 * (a_vec_.dot(mode_)) + LogLikelihood(y_data, y_data_int, location_par_ptr, num_data_);
 			double approx_marginal_ll_new = approx_marginal_ll;
-			vec_t Wsqrt_diag(dim_mode_), sigma_ip_inv_cross_cov_T_rhs(num_ip), rhs(dim_mode_), Wsqrt_Sigma_rhs(dim_mode_), vaux(num_ip), vaux2(num_ip), vaux3(dim_mode_), 
+			vec_t Wsqrt_diag(dim_mode_), sigma_ip_inv_cross_cov_T_rhs(num_ip), rhs(dim_mode_), Wsqrt_Sigma_rhs(dim_mode_), vaux(num_ip), vaux2(num_ip), vaux3(dim_mode_),
 				mode_new(dim_mode_), a_vec_new, DW_plus_I_inv_diag(dim_mode_), a_vec_update, mode_update, W_times_DW_plus_I_inv_diag;//auxiliary variables for updating mode
 			den_mat_t M_aux_Woodbury(num_ip, num_ip); // = sigma_ip + (*cross_cov).transpose() * fitc_diag_plus_WI_inv.asDiagonal() * (*cross_cov)
 			// Start finding mode 
@@ -3190,7 +3190,7 @@ namespace GPBoost {
 			for (it = 0; it < maxit_mode_newton_; ++it) {
 				// Calculate first and second derivative of log-likelihood
 				CalcFirstDerivLogLik(y_data, y_data_int, location_par_ptr);
-				if (it == 0 || information_ll_changes_during_mode_finding_) {
+				if (it == 0 || grad_information_wrt_mode_non_zero_) {
 					CalcDiagInformationLogLik(y_data, y_data_int, location_par_ptr);
 					Wsqrt_diag.array() = information_ll_.array().sqrt();
 					DW_plus_I_inv_diag = (information_ll_.array() * fitc_resid_diag.array() + 1.).matrix().cwiseInverse();
@@ -3251,7 +3251,7 @@ namespace GPBoost {
 				na_or_inf_during_last_call_to_find_mode_ = false;
 				CalcFirstDerivLogLik(y_data, y_data_int, location_par_ptr);//first derivative is not used here anymore but since it is reused in gradient calculation and in prediction, we calculate it once more
 				vec_t fitc_diag_plus_WI_inv;
-				if (information_ll_changes_during_mode_finding_) {
+				if (grad_information_wrt_mode_non_zero_) {
 					CalcDiagInformationLogLik(y_data, y_data_int, location_par_ptr);
 					fitc_diag_plus_WI_inv = (fitc_resid_diag + information_ll_.cwiseInverse()).cwiseInverse();
 					M_aux_Woodbury = *sigma_ip;
@@ -5986,10 +5986,11 @@ namespace GPBoost {
 			}
 			CHECK(mode_has_been_calculated_);
 			pred_mean = cross_cov_pred_ip * (chol_fact_sigma_ip.solve((*cross_cov).transpose() * first_deriv_ll_));
+			Log::REInfo("Test %g %g %g", pred_mean.mean(), pred_mean.minCoeff(), pred_mean.maxCoeff());
 			if (has_fitc_correction) {
 				pred_mean += fitc_resid_pred_obs * first_deriv_ll_;
 			}
-
+			Log::REInfo("Test %g %g %g", pred_mean.mean(), pred_mean.minCoeff(), pred_mean.maxCoeff());
 			if (calc_pred_cov || calc_pred_var) {
 				den_mat_t woodburry_part_sqrt = cross_cov_pred_ip.transpose();
 				sp_mat_t resid_obs_inv_resid_pred_obs_t;

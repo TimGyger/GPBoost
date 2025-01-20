@@ -2,7 +2,7 @@
 * This file is part of GPBoost a C++ library for combining
 *	boosting with Gaussian process and mixed effects models
 *
-* Copyright (c) 2022 Fabio Sigrist. All rights reserved.
+* Copyright (c) 2022 - 2025 Fabio Sigrist. All rights reserved.
 *
 * Licensed under the Apache License Version 2.0. See LICENSE file in the project root for license information.
 */
@@ -13,6 +13,10 @@
 #include <GPBoost/type_defs.h>
 #include <algorithm>    // std::max, std::sort
 #include <numeric>      // std::iota
+#include <unordered_set>
+#include <LightGBM/utils/log.h>
+
+using LightGBM::Log;
 
 namespace GPBoost {
 
@@ -26,7 +30,7 @@ namespace GPBoost {
 	const double EPSILON_ADD_COVARIANCE_STABLE = 1e-10;
 
 	/*! \brief Small numbers by which the diagonals of covariance matrtices are multiplied with when calculating Vecchia approximations without a nugget effect to make inversions numerically stable */
-	const double JITTER_MULT_VECCHIA= 1 + 1e-10;
+	const double JITTER_MULT_VECCHIA = 1 + 1e-10;
 
 	/*! \brief Small number by which the diagonal of inducing points matrix in the FITC & full scales approximations is multiplied with (increased) to make inversions numerically stable */
 	const double JITTER_MULT_IP_FITC_FSA = 1. + 1e-6;
@@ -49,7 +53,7 @@ namespace GPBoost {
 	/*! \brief Checking whether a number 'a' is smaller than another number 'b' */
 	template <typename T>//T can be double or float
 	inline bool NumberIsSmallerThan(const T a, const T b) {
-		return (b - a)  > EPSILON_NUMBERS * std::max<T>({ 1.0, std::abs(b) });
+		return (b - a) > EPSILON_NUMBERS * std::max<T>({ 1.0, std::abs(b) });
 	}
 
 	/*! \brief Get number of non-zero entries in a matrix */
@@ -73,10 +77,76 @@ namespace GPBoost {
 		}
 	};
 
+	/*! \brief Determines the number of unique values of a vector up to a certain number (max_unique_values) */
+	inline int NumberUniqueValues(const vec_t vec,
+		int max_unique_values) {
+		std::unordered_set<double> unique_values;
+		bool found_more_uniques_than_max = false;
+#pragma omp parallel
+		{
+			std::unordered_set<double> local_set;
+#pragma omp for
+			for (data_size_t i = 0; i < (data_size_t)vec.size(); ++i) {
+				if (found_more_uniques_than_max) {
+					continue;
+				}
+				local_set.insert(vec[i]);
+				if ((int)local_set.size() > max_unique_values) {
+#pragma omp critical
+					{
+						found_more_uniques_than_max = true;
+					}
+				}
+			}
+#pragma omp critical
+			{
+				unique_values.insert(local_set.begin(), local_set.end());
+			}
+		}
+		return (int)unique_values.size();
+	};//end NumberUniqueValues
+
+	/*!
+	* \brief Finds the median of the vector vec
+	* \param[out] vec Vector with values (will be partially sorted)
+	* \return Median
+	*/
+	inline double CalculateMedianPartiallySortInput(std::vector<double>& vec) {
+		CHECK(vec.size() > 0);
+		int num_el = (int)vec.size();
+		double median;
+		int pos_med = (int)(num_el / 2);
+		std::nth_element(vec.begin(), vec.begin() + pos_med, vec.end());
+		median = vec[pos_med];
+		if (num_el % 2 == 0) {
+			std::nth_element(vec.begin(), vec.begin() + pos_med - 1, vec.end());
+			median += vec[pos_med - 1];
+			median /= 2.;
+		}
+		return(median);
+	};
+
+	/*!
+	* \brief Finds the mean of the vector vec
+	* \param[out] vec Vector with values
+	* \return Mean
+	*/
+	inline double CalculateMean(const std::vector<double>& vec) {
+		CHECK(vec.size() > 0);
+		int num_el = (int)vec.size();
+		double mean = 0.;
+#pragma omp parallel for schedule(static) reduction(+:mean)
+		for (int i = 0; i < num_el; ++i) {
+			mean += vec[i];
+		}
+		mean /= num_el;
+		return(mean);
+	};
+
 	/*!
 	* \brief Finds the sorting index of vector v and saves it in idx
 	* \param v Vector with values
-	* \param idx Vector where sorting index is written to. idx[k] corresponds to the index of the k-smallest element of v, i.e., v[idx[0]] <= v[idx[1]] <= v[idx[2]] <= ... 
+	* \param idx Vector where sorting index is written to. idx[k] corresponds to the index of the k-smallest element of v, i.e., v[idx[0]] <= v[idx[1]] <= v[idx[2]] <= ...
 	*/
 	template <typename T>
 	void SortIndeces(const std::vector<T>& v,
@@ -193,7 +263,7 @@ namespace GPBoost {
 	/*! \brief Convert a dense matrix to a matrix of type T_mat (dense or sparse) */
 	template <class T_mat1, typename std::enable_if <std::is_same<sp_mat_t, T_mat1>::value ||
 		std::is_same<sp_mat_rm_t, T_mat1>::value>::type* = nullptr >
-	inline void ConvertTo_T_mat_FromDense(const den_mat_t M, T_mat1& Mout) {
+	inline void ConvertTo_T_mat_FromDense(const den_mat_t M, T_mat1 & Mout) {
 		Mout = M.sparseView();
 	};
 	template <class T_mat1, typename std::enable_if< std::is_same<den_mat_t, T_mat1>::value>::type* = nullptr  >

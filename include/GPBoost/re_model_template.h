@@ -5426,7 +5426,7 @@ namespace GPBoost {
 				likelihood_parse = "gaussian_use_likelihoods";
 			}
 			for (const auto& cluster_i : unique_clusters_) {
-				if (gp_approx_ == "vecchia") {
+				if (gp_approx_ == "vecchia" || gp_approx_ == "full_scale_vecchia") {
 					likelihood_[cluster_i] = std::unique_ptr<Likelihood<T_mat, T_chol>>(new Likelihood<T_mat, T_chol>(likelihood_parse,
 						num_data_per_cluster_[cluster_i],
 						re_comps_vecchia_[cluster_i][ind_intercept_gp_]->GetNumUniqueREs(),
@@ -5962,7 +5962,7 @@ namespace GPBoost {
 				Log::REFatal("Duplicates found in inducing points / low-dimensional knots ");
 			}
 			re_comps_ip_cluster_i.push_back(gp_ip);
-			only_one_GP_calculations_on_RE_scale_ = num_gp_total_ == 1 && num_comps_total_ == 1 && !gauss_likelihood_;
+			//only_one_GP_calculations_on_RE_scale_ = num_gp_total_ == 1 && num_comps_total_ == 1 && !gauss_likelihood_;
 			re_comps_cross_cov_cluster_i.push_back(std::shared_ptr<RECompGP<den_mat_t>>(new RECompGP<den_mat_t>(
 				gp_coords_all_mat, gp_coords_ip_mat, cov_fct, cov_fct_shape, cov_fct_taper_range, cov_fct_taper_shape, false, false, only_one_GP_calculations_on_RE_scale_)));
 			if (!(gp_approx_ == "full_scale_vecchia")) {
@@ -7627,10 +7627,10 @@ namespace GPBoost {
 						chol_fact_sigma_woodbury_[cluster_i].compute(sigma_woodbury);
 					}
 					else if (gp_approx_ == "full_scale_tapering") {
-						const den_mat_t* cross_cov_preconditioner = re_comps_cross_cov_preconditioner_[cluster_i][0]->GetSigmaPtr();
-						den_mat_t sigma_ip_stable_preconditioner = *(re_comps_ip_preconditioner_[cluster_i][0]->GetZSigmaZt());
-						den_mat_t sigma_woodbury_preconditioner;// sigma_woodbury = sigma_ip + cross_cov^T * sigma_resid^-1 * cross_cov or for Preconditioner sigma_ip + cross_cov^T * D^-1 * cross_cov
 						if (cg_preconditioner_type_ == "predictive_process_plus_diagonal") {
+							const den_mat_t* cross_cov_preconditioner = re_comps_cross_cov_preconditioner_[cluster_i][0]->GetSigmaPtr();
+							den_mat_t sigma_ip_stable_preconditioner = *(re_comps_ip_preconditioner_[cluster_i][0]->GetZSigmaZt());
+							den_mat_t sigma_woodbury_preconditioner;// sigma_woodbury = sigma_ip + cross_cov^T * sigma_resid^-1 * cross_cov or for Preconditioner sigma_ip + cross_cov^T * D^-1 * cross_cov
 							std::shared_ptr<T_mat> sigma_resid;
 							sigma_resid = re_comps_resid_[cluster_i][0]->GetZSigmaZt();
 							diagonal_approx_preconditioner_[cluster_i] = (*sigma_resid).diagonal();
