@@ -236,7 +236,7 @@ namespace GPBoost {
 		const double* gp_rand_coef_data_pred,
 		int num_neighbors_pred,
 		const string_t& vecchia_neighbor_selection,
-		std::vector<std::shared_ptr<RECompGP<den_mat_t>>>& re_comps_vecchia,
+		std::map<data_size_t, std::vector<std::shared_ptr<RECompGP<den_mat_t>>>>& re_comps_vecchia,
 		int ind_intercept_gp,
 		int num_gp_rand_coef,
 		int num_gp_total,

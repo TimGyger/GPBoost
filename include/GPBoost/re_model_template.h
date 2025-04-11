@@ -5628,8 +5628,8 @@ namespace GPBoost {
 					for (int j = 0; j < num_comps_total_; ++j) {
 						const vec_t pars = cov_pars.segment(ind_par_[j] + igp * num_cov_par_per_set_re_, ind_par_[j + 1] - ind_par_[j]);
 						if (gp_approx_ == "fitc" || gp_approx_ == "full_scale_tapering") {
-							re_comps_ip_[cluster_i][igp][j]->SetCovPars(pars);
-							re_comps_cross_cov_[cluster_i][igp][j]->SetCovPars(pars);
+						re_comps_ip_[cluster_i][j]->SetCovPars(pars);
+						re_comps_cross_cov_[cluster_i][j]->SetCovPars(pars);
 							if (gp_approx_ == "full_scale_tapering") {
 								re_comps_resid_[cluster_i][igp][j]->SetCovPars(pars);
 							}
@@ -5641,9 +5641,8 @@ namespace GPBoost {
 							re_comps_[cluster_i][igp][j]->SetCovPars(pars);
 						}
 					}
-				}//end loop over num_sets_re_
-			}//end loop over unique_clusters_
-		}//end SetCovParsComps
+			}
+		}
 
 		/*!
 		* \brief Calculate the total variance of all random effects
