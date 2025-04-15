@@ -144,8 +144,8 @@ namespace GPBoost {
 				if ((*gradient)[2] >= 1e30 && (*gradient)[2] <= 1.00000000002e30){//hack to indicate that convergece has been achieved and nearest neighbors in Vecchia approximation should potentially been redetermined
 					force_redermination = true;
 				}
-				if (re_model_templ_->ShouldRedetermineNearestNeighborsVecchia(force_redermination)) {
-					re_model_templ_->RedetermineNearestNeighborsVecchia(force_redermination); // called only in certain iterations if gp_approx == "vecchia" and neighbors are selected based on correlations and not distances
+				if (re_model_templ_->ShouldRedetermineNearestNeighborsVecchiaInducingPointsFITC(force_redermination)) {
+					re_model_templ_->RedetermineNearestNeighborsVecchiaInducingPointsFITC(force_redermination); // called only in certain iterations if gp_approx == "vecchia" and neighbors are selected based on correlations and not distances
 					neg_log_likelihood = 1.00000000001e30;//hack to tell the optimizers that the neighbors have indeed been redetermined
 				}
 			} //end should_redetermine_neighbors_vecchia
@@ -390,20 +390,20 @@ namespace GPBoost {
 		}
 
 		/*!
-		* \brief Indicates whether correlation-based nearest neighbors for Vecchia approximation should be updated
-		* \param force_redermination If true, the neighbors are redetermined if applicaple irrespective of num_iter_
-		* \return True, if nearest neighbors have been redetermined
+		* \brief Indicates whether inducing points or/and correlation-based nearest neighbors for Vecchia approximation should be updated
+		* \param force_redermination If true, inducing points/neighbors are redetermined if applicaple irrespective of num_iter_
+		* \return True, if inducing points/nearest neighbors have been redetermined
 		*/
-		bool ShouldRedetermineNearestNeighborsVecchia(bool force_redermination) {
-			return(re_model_templ_->ShouldRedetermineNearestNeighborsVecchia(force_redermination));
+		bool ShouldRedetermineNearestNeighborsVecchiaInducingPointsFITC(bool force_redermination) {
+			return(re_model_templ_->ShouldRedetermineNearestNeighborsVecchiaInducingPointsFITC(force_redermination));
 		}
 
 		/*!
-		* \brief Redetermine correlation-based nearest neighbors for Vecchia approximation
-		* \param force_redermination If true, the neighbors are redetermined if applicaple irrespective of num_iter_
+		* \brief Redetermine inducing points or/and correlation-based nearest neighbors for Vecchia approximation
+		* \param force_redermination If true, inducing points/neighbors are redetermined if applicaple irrespective of num_iter_
 		*/
-		void RedetermineNearestNeighborsVecchia(bool force_redermination) {
-			re_model_templ_->RedetermineNearestNeighborsVecchia(force_redermination);
+		void RedetermineNearestNeighborsVecchiaInducingPointsFITC(bool force_redermination) {
+			re_model_templ_->RedetermineNearestNeighborsVecchiaInducingPointsFITC(force_redermination);
 		}
 
 		/*!

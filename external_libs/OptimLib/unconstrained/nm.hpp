@@ -315,7 +315,7 @@ internal::nm_impl(
             settings_inp->opt_iter = iter - 1;
         }
         //redetermine neighbors for the Vecchia approximation if applicable
-        Vec_t gradient_dummy(3);//"hack" for redermininig neighbors for the Vecchia approximation (i.e. calling RedetermineNearestNeighborsVecchia())
+        Vec_t gradient_dummy(3);//"hack" for redermininig neighbors for the Vecchia approximation and/or inducing points (i.e. calling RedetermineNearestNeighborsVecchiaInducingPointsFITC())
         gradient_dummy[0] = 1.00000000001e30;
         gradient_dummy[1] = -1.00000000001e30;
         if (has_converged) {

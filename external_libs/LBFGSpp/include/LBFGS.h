@@ -208,9 +208,9 @@ public:
             // Potentially redetermine nearest neighbors for Vecchia approximation
             f.SetNumIter(k - 1);
             f.SetLag1ProfiledOutVariables();
-            if (f.LearnCovarianceParameters() && f.ShouldRedetermineNearestNeighborsVecchia(has_converged))
+            if (f.LearnCovarianceParameters() && f.ShouldRedetermineNearestNeighborsVecchiaInducingPointsFITC(has_converged))
             {
-                f.RedetermineNearestNeighborsVecchia(has_converged); // called only in certain iterations if gp_approx == "vecchia" and neighbors are selected based on correlations and not distances
+                f.RedetermineNearestNeighborsVecchiaInducingPointsFITC(has_converged);  // called only in certain iterations if gp_approx == "vecchia" and neighbors are selected based on correlations and not distances
                 m_fx[k % fpast] = f(m_xp, m_gradp, true, true);       // recalculate lag-1 objective and gradient
                 fx = f(x, m_grad, true, true); // recalculate new objective and gradient
                 // check convergence again
@@ -226,7 +226,7 @@ public:
                     {
                         if (fpast != 1)
                         {
-                            Log::REFatal("'fpast' must be 1 for 'RedetermineNearestNeighborsVecchia' but was %g ", fpast);
+                            Log::REFatal("'fpast' must be 1 for 'RedetermineNearestNeighborsVecchiaInducingPointsFITC' but was %g ", fpast);
                         }
                         const Scalar fxd = m_fx[k % fpast];
                         if (k >= fpast && (fxd - fx) <= m_param.delta * std::max(abs(fxd), Scalar(1)))
