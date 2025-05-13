@@ -549,6 +549,16 @@ namespace GPBoost {
 		RNG_t& gen,
 		den_mat_t& means);
 
+	/*!
+	* \brief Matrix-multiplication A * B = C
+	* \param A First Matrix
+	* \param B Second Matrix
+	* \param[out] C = A * B
+	* \param GPU_use if false Use CPU 
+	*/
+	void matmul(const den_mat_t& A, const den_mat_t& B, den_mat_t& C, bool GPU_use);
+
+
 }  // namespace GPBoost
 
 #endif   // GPB_GP_UTIL_H_

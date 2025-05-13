@@ -10,6 +10,12 @@
 #include <GPBoost/utils.h>
 #include <cmath>
 
+#ifdef USE_CUDA_GP
+#include <cuda_runtime.h>
+#include <cublas_v2.h>
+#endif
+
+
 namespace GPBoost {
 
 	void DetermineUniqueDuplicateCoords(const den_mat_t& coords,
@@ -381,5 +387,39 @@ namespace GPBoost {
 			unique_idx[i] = inv_order_uniques[unique_idx[i]];
 		}
 	}//end DetermineUniqueDuplicateCoordsFast
+
+#ifndef USE_CUDA_GP
+	void matmul(const den_mat_t& A, const den_mat_t& B, den_mat_t& C, bool GPU_use) {
+		if (GPU_use) {
+			Log::REInfo("[Fallback] Not able to compile CUDA Code. Continuing with CPU support.");
+			GPU_use = false;
+		}
+		C = A * B;
+	}
+#else
+	// Declaration for GPU version
+	bool try_matmul_gpu(const den_mat_t& A, const den_mat_t& B, den_mat_t& C);
+
+	void matmul(const den_mat_t& A, const den_mat_t& B, den_mat_t& C, bool GPU_use) {
+		if (!GPU_use) {
+			Log::REInfo("[Fallback] Forced Eigen matrix-multiplication.");
+			C = A * B;
+			return;
+		}
+		int device_count = 0;
+		cudaError_t err = cudaGetDeviceCount(&device_count);
+		if (err != cudaSuccess || device_count == 0) {
+			Log::REInfo("[Fallback] No CUDA devices found. Using Eigen for matrix-multiplication.");
+			C = A * B;
+			GPU_use = false;
+			return;
+		}
+
+		if (!try_matmul_gpu(A, B, C)) {
+			Log::REInfo("[Fallback] Error in computation on GPU. Using Eigen for matrix-multiplication.");
+			C = A * B;
+		}
+	}
+#endif
 
 }  // namespace GPBoost
