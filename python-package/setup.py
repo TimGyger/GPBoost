@@ -103,7 +103,7 @@ def compile_cpp(
     use_mingw: bool = False,
     use_gpu: bool = False,
     use_cuda: bool = False,
-    use_cudagpu: bool = False,
+    use_cudagp: bool = False,
     use_mpi: bool = False,
     use_hdfs: bool = False,
     boost_root: Optional[str] = None,
