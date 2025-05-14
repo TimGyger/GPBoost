@@ -294,7 +294,7 @@ if(USE_CUDA_GP)
     endif()
     message(STATUS "CMAKE_CUDA_FLAGS: ${CMAKE_CUDA_FLAGS}")
 
-    add_definitions(-DUSE_CUDA)
+    add_definitions(-DUSE_CUDA_GP)
 
     if(NOT DEFINED CMAKE_CUDA_STANDARD)
       set(CMAKE_CUDA_STANDARD 11)
@@ -431,16 +431,18 @@ file(GLOB SOURCES
 if(USE_CUDA)
     src/LightGBM/treelearner/*.cu
 endif(USE_CUDA)
-)
-
-set(
-   CUDA_GP_SOURCES
-      src/GPBoost/*.cu
-)
-
 if(USE_CUDA_GP)
-  list(APPEND SOURCES ${CUDA_GP_SOURCES})
+    src/GPBoost/*.cu
 endif(USE_CUDA_GP)
+)
+#set(
+#   CUDA_GP_SOURCES
+#      src/GPBoost/*.cu
+#)
+
+#if(USE_CUDA_GP)
+#  list(APPEND SOURCES ${CUDA_GP_SOURCES})
+#endif(USE_CUDA_GP)
 
 add_executable(gpboost src/LightGBM/main.cpp src/LightGBM/application/application.cpp ${SOURCES})
 
