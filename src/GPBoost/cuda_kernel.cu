@@ -29,7 +29,7 @@ namespace GPBoost {
         const double* h_B = B.data();
         double* h_C = C.data();
 
-        double* d_A, * d_B, * d_C;
+        double* d_A = nullptr, * d_B = nullptr, * d_C = nullptr;
         cudaError_t cuda_stat;
         cublasStatus_t stat;
         cublasHandle_t handle;
@@ -41,28 +41,42 @@ namespace GPBoost {
         cuda_stat = cudaMalloc((void**)&d_A, size_A);
         if (cuda_stat != cudaSuccess) return false;
         cuda_stat = cudaMalloc((void**)&d_B, size_B);
-        if (cuda_stat != cudaSuccess) return false;
+        if (cuda_stat != cudaSuccess) {
+            cudaFree(d_A);
+            return false;
+        }
+
         cuda_stat = cudaMalloc((void**)&d_C, size_C);
-        if (cuda_stat != cudaSuccess) return false;
+        if (cuda_stat != cudaSuccess) {
+            cudaFree(d_A); cudaFree(d_B);
+            return false;
+        }
 
         cudaMemcpy(d_A, h_A, size_A, cudaMemcpyHostToDevice);
         cudaMemcpy(d_B, h_B, size_B, cudaMemcpyHostToDevice);
 
         stat = cublasCreate(&handle);
-        if (stat != CUBLAS_STATUS_SUCCESS) return false;
+        if (stat != CUBLAS_STATUS_SUCCESS) {
+            cudaFree(d_A); cudaFree(d_B); cudaFree(d_C);
+            return false;
+        }
 
         const double alpha = 1.0;
         const double beta = 0.0;
 
-        // Note: cuBLAS is column-major, so we use B^T and A^T to compute C = A * B
+        // cuBLAS performs: C = alpha * op(A) * op(B) + beta * C
+        // We want: C = A * B
+        // A: MxK, B: KxN, C: MxN
+        // So op(A) = A, op(B) = B
         stat = cublasDgemm(handle,
-            CUBLAS_OP_N, CUBLAS_OP_N,
-            N, M, K,               // Transposed dims due to column-major
+            CUBLAS_OP_N, CUBLAS_OP_N,  // No transpose
+            M, N, K,                   // C is MxN, A is MxK, B is KxN
             &alpha,
-            d_B, N,
-            d_A, K,
+            d_A, M,  // lda = leading dim of A = M (since column-major)
+            d_B, K,  // ldb = leading dim of B = K
             &beta,
-            d_C, N);
+            d_C, M); // ldc = leading dim of C = M
+
         if (stat != CUBLAS_STATUS_SUCCESS) {
             cublasDestroy(handle);
             cudaFree(d_A); cudaFree(d_B); cudaFree(d_C);
