@@ -558,6 +558,13 @@ namespace GPBoost {
 	*/
 	void matmul(const den_mat_t& A, const den_mat_t& B, den_mat_t& C, bool GPU_use);
 
+	/*!
+	* \brief Cholesky factor of A_input = LL^T
+	* \param[out] llt Cholesky factor L
+	* \param A_input Matrix
+	* \param GPU_use if false Use CPU
+	*/
+	void cholesky_solver(chol_den_mat_t& llt, const den_mat_t& A_input, bool GPU_use);
 
 }  // namespace GPBoost
 

@@ -8023,6 +8023,10 @@ namespace GPBoost {
 		* \brief Calculate cholesky factor of Woodbury matrix for fitc and full scale approximations
 		*/
 		void CalcCovFactorFITC_FSA() {
+			Log::REInfo("start");//only for debugging
+			std::chrono::steady_clock::time_point begin, end;//only for debugging
+			double el_time;//only for debugging
+			begin = std::chrono::steady_clock::now();//only for debugging
 			for (const auto& cluster_i : unique_clusters_) {
 				// factorize matrix used in Woodbury identity
 				if (matrix_inversion_method_ == "iterative") {
@@ -8087,14 +8091,7 @@ namespace GPBoost {
 						//ApplyPermutationCholeskyFactor<den_mat_t, T_chol>(chol_fact_resid_[cluster_i], *cross_cov, sigma_resid_Ihalf_cross_cov, false);//DELETE_SOLVEINPLACE
 						//chol_fact_resid_[cluster_i].matrixL().solveInPlace(sigma_resid_Ihalf_cross_cov);
 						TriangularSolveGivenCholesky<T_chol, T_mat, den_mat_t, den_mat_t>(chol_fact_resid_[cluster_i], *cross_cov, sigma_resid_Ihalf_cross_cov, false);
-						Log::REInfo("start");//only for debugging
-						std::chrono::steady_clock::time_point begin, end;//only for debugging
-						double el_time;//only for debugging
-						begin = std::chrono::steady_clock::now();//only for debugging
 						GPBoost::matmul(sigma_resid_Ihalf_cross_cov.transpose(), sigma_resid_Ihalf_cross_cov, sigma_woodbury, GPU_use_);
-						end = std::chrono::steady_clock::now();//only for debugging
-						el_time = (double)(std::chrono::duration_cast<std::chrono::microseconds>(end - begin).count()) / 1000000.;//only for debugging
-						Log::REInfo(" time until = %g ", el_time);
 						//sigma_woodbury = sigma_resid_Ihalf_cross_cov.transpose() * sigma_resid_Ihalf_cross_cov;
 					}
 					else if (gp_approx_ == "full_scale_vecchia") {
@@ -8132,6 +8129,9 @@ namespace GPBoost {
 					Log::REFatal("Matrix inversion method '%s' is not supported.", matrix_inversion_method_.c_str());
 				}
 			}
+			end = std::chrono::steady_clock::now();//only for debugging
+			el_time = (double)(std::chrono::duration_cast<std::chrono::microseconds>(end - begin).count()) / 1000000.;//only for debugging
+			Log::REInfo(" time until = %g ", el_time);
 		}//end CalcCovFactorFITC_FSA
 
 		/*!

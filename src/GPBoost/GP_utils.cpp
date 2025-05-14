@@ -389,6 +389,7 @@ namespace GPBoost {
 	}//end DetermineUniqueDuplicateCoordsFast
 
 #ifndef USE_CUDA_GP
+	// Matrix multiplication
 	void matmul(const den_mat_t& A, const den_mat_t& B, den_mat_t& C, bool GPU_use) {
 		if (GPU_use) {
 			Log::REInfo("[Fallback] Not able to compile CUDA Code. Continuing with CPU support.");
@@ -396,8 +397,17 @@ namespace GPBoost {
 		}
 		C = A * B;
 	}
+
+	// Cholesky Factor
+	void cholesky_solver(chol_den_mat_t& llt, const den_mat_t& A_input, bool GPU_use) {
+		if (GPU_use) {
+			Log::REInfo("[Fallback] Not able to compile CUDA Code. Continuing with CPU support.");
+			GPU_use = false;
+		}
+		llt.compute(A_input);
+	}
 #else
-	// Declaration for GPU version
+	// Matrix multiplication
 	bool try_matmul_gpu(const den_mat_t& A, const den_mat_t& B, den_mat_t& C);
 
 	void matmul(const den_mat_t& A, const den_mat_t& B, den_mat_t& C, bool GPU_use) {
@@ -418,6 +428,30 @@ namespace GPBoost {
 		if (!try_matmul_gpu(A, B, C)) {
 			Log::REInfo("[Fallback] Error in computation on GPU. Using Eigen for matrix-multiplication.");
 			C = A * B;
+		}
+	}
+
+	// Cholesky Factor
+	bool cholesky_cusolver_to_eigen(chol_den_mat_t& llt, const den_mat_t& A_input);
+
+	void cholesky_solver(chol_den_mat_t& llt, const den_mat_t& A_input, bool GPU_use) {
+		if (!GPU_use) {
+			Log::REInfo("[Fallback] Forced Eigen Cholesky factorization.");
+			llt.compute(A_input);
+			return;
+		}
+		int device_count = 0;
+		cudaError_t err = cudaGetDeviceCount(&device_count);
+		if (err != cudaSuccess || device_count == 0) {
+			Log::REInfo("[Fallback] No CUDA devices found. Using Eigen for Cholesky factorization.");
+			llt.compute(A_input);
+			GPU_use = false;
+			return;
+		}
+
+		if (!try_matmul_gpu(A, B, C)) {
+			Log::REInfo("[Fallback] Error in computation on GPU. Using Eigen for Cholesky factorization.");
+			llt.compute(A_input);
 		}
 	}
 #endif

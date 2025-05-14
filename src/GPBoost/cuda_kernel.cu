@@ -11,6 +11,7 @@
 #include <GPBoost/GP_utils.h>
 #include <cuda_runtime.h>
 #include <cublas_v2.h>
+#include <cusolverDn.h>
 #include <LightGBM/utils/log.h>
 using LightGBM::Log;
 
@@ -89,6 +90,52 @@ namespace GPBoost {
         cudaFree(d_A); cudaFree(d_B); cudaFree(d_C);
 
         Log::REInfo("[GPU] Matrix multiplication completed with cuBLAS.");
+        return true;
+    }
+
+    bool cholesky_cusolver_to_eigen(chol_den_mat_t& llt, const den_mat_t& A_input) {
+        int N = A_input.rows();
+        if (A_input.cols() != N) return false;
+
+        // Step 1: Create cuSolver handle
+        cusolverDnHandle_t handle;
+        cusolverDnCreate(&handle);
+
+        // Step 2: Allocate GPU memory
+        double* d_A;
+        cudaMalloc((void**)&d_A, sizeof(double) * N * N);
+        cudaMemcpy(d_A, A_input.data(), sizeof(double) * N * N, cudaMemcpyHostToDevice);
+
+        // Step 3: Buffer size & workspace
+        int work_size = 0;
+        cusolverDnDpotrf_bufferSize(handle, CUBLAS_FILL_MODE_LOWER, N, d_A, N, &work_size);
+        double* work;
+        cudaMalloc((void**)&work, sizeof(double) * work_size);
+        int* dev_info;
+        cudaMalloc((void**)&dev_info, sizeof(int));
+
+        // Step 4: Perform Cholesky on GPU
+        cusolverDnDpotrf(handle, CUBLAS_FILL_MODE_LOWER, N, d_A, N, work, work_size, dev_info);
+
+        int dev_info_h = 0;
+        cudaMemcpy(&dev_info_h, dev_info, sizeof(int), cudaMemcpyDeviceToHost);
+        if (dev_info_h != 0) {
+            cudaFree(d_A); cudaFree(work); cudaFree(dev_info);
+            cusolverDnDestroy(handle);
+            return false;
+        }
+
+        // Step 5: Copy Cholesky factor back
+        Eigen::MatrixXd L(N, N);
+        cudaMemcpy(L.data(), d_A, sizeof(double) * N * N, cudaMemcpyDeviceToHost);
+
+        // Step 6: Store result into LLT object (only lower triangle is valid)
+        llt.compute(L.selfadjointView<Eigen::Lower>());
+
+        // Step 7: Cleanup
+        cudaFree(d_A); cudaFree(work); cudaFree(dev_info);
+        cusolverDnDestroy(handle);
+
         return true;
     }
 
