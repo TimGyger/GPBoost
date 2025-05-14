@@ -563,9 +563,9 @@ if(USE_CUDA_GP)
 
   TARGET_LINK_LIBRARIES(
     _gpboost
-    CUDA::cudart
-    CUDA::cublas
-    #CUDA::cusolver
+    #CUDA::cudart
+    #CUDA::cublas
+    CUDA::cusolver
   )
 
 endif(USE_CUDA_GP)
