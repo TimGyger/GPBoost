@@ -25,18 +25,18 @@ namespace GPBoost {
 
         C.resize(M, N);
 
-        const float* h_A = A.data();
-        const float* h_B = B.data();
-        float* h_C = C.data();
+        const double* h_A = A.data();
+        const double* h_B = B.data();
+        double* h_C = C.data();
 
-        float* d_A, * d_B, * d_C;
+        double* d_A, * d_B, * d_C;
         cudaError_t cuda_stat;
         cublasStatus_t stat;
         cublasHandle_t handle;
 
-        size_t size_A = M * K * sizeof(float);
-        size_t size_B = K * N * sizeof(float);
-        size_t size_C = M * N * sizeof(float);
+        size_t size_A = M * K * sizeof(double);
+        size_t size_B = K * N * sizeof(double);
+        size_t size_C = M * N * sizeof(double);
 
         cuda_stat = cudaMalloc((void**)&d_A, size_A);
         if (cuda_stat != cudaSuccess) return false;
@@ -51,11 +51,11 @@ namespace GPBoost {
         stat = cublasCreate(&handle);
         if (stat != CUBLAS_STATUS_SUCCESS) return false;
 
-        const float alpha = 1.0f;
-        const float beta = 0.0f;
+        const double alpha = 1.0;
+        const double beta = 0.0;
 
         // Note: cuBLAS is column-major, so we use B^T and A^T to compute C = A * B
-        stat = cublasSgemm(handle,
+        stat = cublasDgemm(handle,
             CUBLAS_OP_N, CUBLAS_OP_N,
             N, M, K,               // Transposed dims due to column-major
             &alpha,
