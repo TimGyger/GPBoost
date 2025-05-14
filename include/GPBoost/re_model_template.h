@@ -8024,8 +8024,9 @@ namespace GPBoost {
 		*/
 		void CalcCovFactorFITC_FSA() {
 			Log::REInfo("start");//only for debugging
-			std::chrono::steady_clock::time_point begin, end;//only for debugging
+			std::chrono::steady_clock::time_point begin, end, begin1;//only for debugging
 			double el_time;//only for debugging
+			begin1 = std::chrono::steady_clock::now();//only for debugging
 			begin = std::chrono::steady_clock::now();//only for debugging
 			for (const auto& cluster_i : unique_clusters_) {
 				// factorize matrix used in Woodbury identity
@@ -8111,11 +8112,17 @@ namespace GPBoost {
 					if (gp_approx_ == "full_scale_vecchia") {
 						sigma_woodbury_[cluster_i] = sigma_woodbury;
 					}
+					end = std::chrono::steady_clock::now();//only for debugging
+					el_time = (double)(std::chrono::duration_cast<std::chrono::microseconds>(end - begin).count()) / 1000000.;//only for debugging
+					Log::REInfo("MM time until = %g ", el_time);
 					//// adding jitter to this Woodbury matrix changes the results too much without helping really (06.11.2024)
 					//sigma_woodbury.diagonal().array() *= JITTER_MULT_IP_FITC_FSA;
-
-					chol_fact_sigma_woodbury_[cluster_i].compute(sigma_woodbury);
-
+					begin = std::chrono::steady_clock::now();//only for debugging
+					cholesky_solver(chol_fact_sigma_woodbury_[cluster_i], sigma_woodbury, GPU_use_);
+					//chol_fact_sigma_woodbury_[cluster_i].compute(sigma_woodbury);
+					end = std::chrono::steady_clock::now();//only for debugging
+					el_time = (double)(std::chrono::duration_cast<std::chrono::microseconds>(end - begin).count()) / 1000000.;//only for debugging
+					Log::REInfo("Chol time until = %g ", el_time);
 					////alternative way for calculating determinants with Woodbury (does not solve numerical stability issue, 05.06.2024)
 					//den_mat_t sigma_woodbury_stable = sigma_woodbury;
 					//TriangularSolveGivenCholesky<chol_den_mat_t, den_mat_t, den_mat_t, den_mat_t>(chol_fact_sigma_ip_[cluster_i][0], sigma_woodbury_stable, sigma_woodbury_stable, false);
@@ -8130,8 +8137,8 @@ namespace GPBoost {
 				}
 			}
 			end = std::chrono::steady_clock::now();//only for debugging
-			el_time = (double)(std::chrono::duration_cast<std::chrono::microseconds>(end - begin).count()) / 1000000.;//only for debugging
-			Log::REInfo(" time until = %g ", el_time);
+			el_time = (double)(std::chrono::duration_cast<std::chrono::microseconds>(end - begin1).count()) / 1000000.;//only for debugging
+			Log::REInfo("All time until = %g ", el_time);
 		}//end CalcCovFactorFITC_FSA
 
 		/*!
