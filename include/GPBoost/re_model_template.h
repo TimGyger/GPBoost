@@ -8055,6 +8055,7 @@ namespace GPBoost {
 //							B_T_D_inv_B_cross_cov_[cluster_i][0].col(i) = B_t_D_inv_rm_[cluster_i][0] * B_cross_cov_[cluster_i][0].col(i);
 //						}
 						//den_mat_t sigma_woodbury = B_cross_cov_[cluster_i][0].transpose() * D_inv_B_cross_cov_[cluster_i][0];
+						den_mat_t sigma_woodbury;
 						GPBoost::matmul(B_cross_cov_[cluster_i][0].transpose(), D_inv_B_cross_cov_[cluster_i][0], sigma_woodbury, GPU_use_);
 						sigma_woodbury += sigma_ip_stable;
 						sigma_woodbury_[cluster_i] = sigma_woodbury;

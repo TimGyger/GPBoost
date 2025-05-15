@@ -153,7 +153,7 @@ namespace GPBoost {
             CUSPARSE_OPERATION_NON_TRANSPOSE,
             CUSPARSE_OPERATION_NON_TRANSPOSE,
             &alpha, matA, matB, &beta, matC,
-            CUDA_R_64F, CUSPARSE_MM_ALG_DEFAULT,
+            CUDA_R_64F, CUSPARSE_SPMM_ALG_DEFAULT,
             &bufferSize);
         cudaMalloc(&dBuffer, bufferSize);
 
@@ -161,7 +161,7 @@ namespace GPBoost {
             CUSPARSE_OPERATION_NON_TRANSPOSE,
             CUSPARSE_OPERATION_NON_TRANSPOSE,
             &alpha, matA, matB, &beta, matC,
-            CUDA_R_64F, CUSPARSE_MM_ALG_DEFAULT,
+            CUDA_R_64F, CUSPARSE_SPMM_ALG_DEFAULT,
             dBuffer);
 
         if (stat != CUSPARSE_STATUS_SUCCESS) {
