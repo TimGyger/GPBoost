@@ -261,7 +261,7 @@ if(USE_CUDA_GP)
     find_package(CUDAToolkit 11.0 REQUIRED)
     #find_library(CUBLAS_LIBRARY cublas HINTS ${CUDA_TOOLKIT_ROOT_DIR}/lib64 ${CUDA_TOOLKIT_ROOT_DIR}/targets/x86_64-linux/lib)
     #find_library(CUSOLVER_LIBRARY cusolver HINTS ${CUDA_TOOLKIT_ROOT_DIR}/lib64 ${CUDA_TOOLKIT_ROOT_DIR}/targets/x86_64-linux/lib)
-    include_directories(${CUDAToolkit_INCLUDE_DIRS})
+    #include_directories(${CUDAToolkit_INCLUDE_DIRS})
     set(CMAKE_CUDA_FLAGS "${CMAKE_CUDA_FLAGS} -Xcompiler=${OpenMP_CXX_FLAGS} -Xcompiler=-fPIC -Xcompiler=-Wall")
 
     # reference for mapping of CUDA toolkit component versions to supported architectures ("compute capabilities"):
@@ -299,7 +299,7 @@ if(USE_CUDA_GP)
     add_definitions(-DUSE_CUDA_GP)
 
     if(NOT DEFINED CMAKE_CUDA_STANDARD)
-      set(CMAKE_CUDA_STANDARD 11)
+      set(CMAKE_CUDA_STANDARD 12)
       set(CMAKE_CUDA_STANDARD_REQUIRED ON)
     endif()
 endif(USE_CUDA_GP)
