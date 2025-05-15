@@ -8091,7 +8091,7 @@ namespace GPBoost {
 					den_mat_t sigma_woodbury;// sigma_woodbury = sigma_ip + cross_cov^T * sigma_resid^-1 * cross_cov or for Preconditioner sigma_ip + cross_cov^T * D^-1 * cross_cov
 					if (gp_approx_ == "fitc") {
 						den_mat_t D_cross_cov;
-						begin1 = std::chrono::steady_clock::now();//only for debugging
+						begin = std::chrono::steady_clock::now();//only for debugging
 						GPBoost::diag_dense_matmul(fitc_resid_diag_[cluster_i].cwiseInverse(), (*cross_cov), D_cross_cov, GPU_use_);
 						end = std::chrono::steady_clock::now();//only for debugging
 						el_time = (double)(std::chrono::duration_cast<std::chrono::microseconds>(end - begin).count()) / 1000000.;//only for debugging
