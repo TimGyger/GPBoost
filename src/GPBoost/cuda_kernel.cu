@@ -150,7 +150,7 @@ namespace GPBoost {
         cudaFree(d_C);
         cublasDestroy(handle);
 
-        Log::REInfo("[GPU] Diagonal × Dense matrix multiplication completed with cuBLAS.");
+        Log::REInfo("[GPU] Diagonal x Dense matrix multiplication completed with cuBLAS.");
         return true;
     }
 
