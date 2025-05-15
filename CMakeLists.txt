@@ -299,7 +299,7 @@ if(USE_CUDA_GP)
     add_definitions(-DUSE_CUDA_GP)
 
     if(NOT DEFINED CMAKE_CUDA_STANDARD)
-      set(CMAKE_CUDA_STANDARD 12)
+      set(CMAKE_CUDA_STANDARD 11)
       set(CMAKE_CUDA_STANDARD_REQUIRED ON)
     endif()
 endif(USE_CUDA_GP)
