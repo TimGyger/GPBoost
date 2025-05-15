@@ -565,7 +565,7 @@ namespace GPBoost {
 	* \param[out] C = A * B
 	* \param GPU_use if false Use CPU
 	*/
-	void diag_dense_matmul(const den_mat_t& A, const den_mat_t& B, den_mat_t& C, bool GPU_use);
+	void diag_dense_matmul(const vec_t& D, const den_mat_t& B, den_mat_t& C, bool GPU_use);
 
 	/*!
 	* \brief Sparse-Dense-Matrix-multiplication A * B = C
