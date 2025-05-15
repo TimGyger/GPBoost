@@ -105,11 +105,10 @@ namespace GPBoost {
         C.setZero();
 
         // Convert Eigen sparse matrix to CSR format (cuSPARSE prefers CSR)
-        sp_mat_rm_t A_rm = A;  // Already RowMajor
-        const int nnz = A_rm.nonZeros();
-        const int* h_csrOffsets = A_rm.outerIndexPtr();  // Row pointers
-        const int* h_columns = A_rm.innerIndexPtr();     // Column indices
-        const double* h_values = A_rm.valuePtr();        // Non-zero values
+        const int nnz = A.nonZeros();
+        const int* h_csrOffsets = A.outerIndexPtr();  // Row pointers
+        const int* h_columns = A.innerIndexPtr();     // Column indices
+        const double* h_values = A.valuePtr();        // Non-zero values
 
         // Allocate device memory
         int* d_csrOffsets;
@@ -128,7 +127,7 @@ namespace GPBoost {
         cudaMemcpy(d_columns, h_columns, nnz * sizeof(int), cudaMemcpyHostToDevice);
         cudaMemcpy(d_values, h_values, nnz * sizeof(double), cudaMemcpyHostToDevice);
         cudaMemcpy(d_B, B.data(), K * N * sizeof(double), cudaMemcpyHostToDevice);
-        cudaMemset(d_C, 0, M * N * sizeof(double));
+        //cudaMemset(d_C, 0, M * N * sizeof(double));
 
         // Create cuSPARSE handle and descriptors
         cusparseHandle_t handle;

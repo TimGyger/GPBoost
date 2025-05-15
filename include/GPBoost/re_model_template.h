@@ -8027,7 +8027,6 @@ namespace GPBoost {
 			std::chrono::steady_clock::time_point begin, end, begin1;//only for debugging
 			double el_time;//only for debugging
 			begin1 = std::chrono::steady_clock::now();//only for debugging
-			begin = std::chrono::steady_clock::now();//only for debugging
 			for (const auto& cluster_i : unique_clusters_) {
 				// factorize matrix used in Woodbury identity
 				if (matrix_inversion_method_ == "iterative") {
@@ -8111,8 +8110,15 @@ namespace GPBoost {
 //							D_inv_B_cross_cov_[cluster_i][0].col(i) = D_inv_rm_[cluster_i][0] * B_cross_cov_[cluster_i][0].col(i);
 //							B_T_D_inv_B_cross_cov_[cluster_i][0].col(i) = B_t_D_inv_rm_[cluster_i][0] * B_cross_cov_[cluster_i][0].col(i);
 //						}
+						begin = std::chrono::steady_clock::now();//only for debugging
 						GPBoost::sparse_dense_matmul(B_rm_[cluster_i][0], (*cross_cov), B_cross_cov_[cluster_i][0], GPU_use_);
+						end = std::chrono::steady_clock::now();//only for debugging
+						el_time = (double)(std::chrono::duration_cast<std::chrono::microseconds>(end - begin).count()) / 1000000.;//only for debugging
+						Log::REInfo("Sparse MM1 time until = %g ", el_time);
 						GPBoost::sparse_dense_matmul(D_inv_rm_[cluster_i][0], B_cross_cov_[cluster_i][0], D_inv_B_cross_cov_[cluster_i][0], GPU_use_);
+						end = std::chrono::steady_clock::now();//only for debugging
+						el_time = (double)(std::chrono::duration_cast<std::chrono::microseconds>(end - begin).count()) / 1000000.;//only for debugging
+						Log::REInfo("Sparse MM2 time until = %g ", el_time);
 						GPBoost::sparse_dense_matmul(B_t_D_inv_rm_[cluster_i][0], B_cross_cov_[cluster_i][0], B_T_D_inv_B_cross_cov_[cluster_i][0], GPU_use_);
 						end = std::chrono::steady_clock::now();//only for debugging
 						el_time = (double)(std::chrono::duration_cast<std::chrono::microseconds>(end - begin1).count()) / 1000000.;//only for debugging
@@ -8125,9 +8131,6 @@ namespace GPBoost {
 					if (gp_approx_ == "full_scale_vecchia") {
 						sigma_woodbury_[cluster_i] = sigma_woodbury;
 					}
-					end = std::chrono::steady_clock::now();//only for debugging
-					el_time = (double)(std::chrono::duration_cast<std::chrono::microseconds>(end - begin).count()) / 1000000.;//only for debugging
-					Log::REInfo("MM time until = %g ", el_time);
 					//// adding jitter to this Woodbury matrix changes the results too much without helping really (06.11.2024)
 					//sigma_woodbury.diagonal().array() *= JITTER_MULT_IP_FITC_FSA;
 					begin = std::chrono::steady_clock::now();//only for debugging
