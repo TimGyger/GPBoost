@@ -8044,9 +8044,9 @@ namespace GPBoost {
 						B_cross_cov_[cluster_i][0].resize(num_data_per_cluster_[cluster_i], num_ind_points_);
 						B_T_D_inv_B_cross_cov_[cluster_i][0].resize(num_data_per_cluster_[cluster_i], num_ind_points_);
 
-						GPBoost::sparse_dense_matmul(B_rm_[cluster_i][0], (*cross_cov), B_cross_cov_[cluster_i][0], GPU_use_);
-						GPBoost::sparse_dense_matmul(D_inv_rm_[cluster_i][0], B_cross_cov_[cluster_i][0], D_inv_B_cross_cov_[cluster_i][0], GPU_use_);
-						GPBoost::sparse_dense_matmul(B_t_D_inv_rm_[cluster_i][0], B_cross_cov_[cluster_i][0], B_T_D_inv_B_cross_cov_[cluster_i][0], GPU_use_);
+						GPBoost::sparse_dense_matmul(B_rm_[cluster_i][0], (*cross_cov), B_cross_cov_[cluster_i][0], false);
+						GPBoost::sparse_dense_matmul(D_inv_rm_[cluster_i][0], B_cross_cov_[cluster_i][0], D_inv_B_cross_cov_[cluster_i][0], false);
+						GPBoost::sparse_dense_matmul(B_t_D_inv_rm_[cluster_i][0], B_cross_cov_[cluster_i][0], B_T_D_inv_B_cross_cov_[cluster_i][0], false);
 //#pragma omp parallel for schedule(static)   
 //						for (int i = 0; i < num_ind_points_; ++i) {
 //							B_cross_cov_[cluster_i][0].col(i) = B_rm_[cluster_i][0] * (*cross_cov).col(i);
@@ -8070,7 +8070,10 @@ namespace GPBoost {
 							diagonal_approx_preconditioner_[cluster_i] = (*sigma_resid).diagonal();
 							sigma_ip_stable_preconditioner.diagonal().array() *= JITTER_MULT_IP_FITC_FSA;
 							diagonal_approx_inv_preconditioner_[cluster_i] = diagonal_approx_preconditioner_[cluster_i].cwiseInverse();
-							sigma_woodbury_preconditioner = (*cross_cov_preconditioner).transpose() * (diagonal_approx_inv_preconditioner_[cluster_i].asDiagonal() * (*cross_cov_preconditioner));
+							den_mat_t D_cross_cov;
+							GPBoost::diag_dense_matmul(diagonal_approx_inv_preconditioner_[cluster_i], (*cross_cov_preconditioner), D_cross_cov, GPU_use_);
+							GPBoost::matmul((*cross_cov_preconditioner).transpose(), D_cross_cov, sigma_woodbury_preconditioner, GPU_use_);
+							//sigma_woodbury_preconditioner = (*cross_cov_preconditioner).transpose() * (diagonal_approx_inv_preconditioner_[cluster_i].asDiagonal() * (*cross_cov_preconditioner));
 							sigma_woodbury_preconditioner += sigma_ip_stable_preconditioner;
 							chol_fact_woodbury_preconditioner_[cluster_i].compute(sigma_woodbury_preconditioner);
 						}
@@ -8087,7 +8090,10 @@ namespace GPBoost {
 					sigma_ip_stable.diagonal().array() *= JITTER_MULT_IP_FITC_FSA;
 					den_mat_t sigma_woodbury;// sigma_woodbury = sigma_ip + cross_cov^T * sigma_resid^-1 * cross_cov or for Preconditioner sigma_ip + cross_cov^T * D^-1 * cross_cov
 					if (gp_approx_ == "fitc") {
-						sigma_woodbury = ((*cross_cov).transpose() * fitc_resid_diag_[cluster_i].cwiseInverse().asDiagonal()) * (*cross_cov);
+						den_mat_t D_cross_cov;
+						GPBoost::diag_dense_matmul(fitc_resid_diag_[cluster_i].cwiseInverse(), (*cross_cov), D_cross_cov, GPU_use_);
+						GPBoost::matmul((*cross_cov).transpose(), D_cross_cov, sigma_woodbury, GPU_use_);
+						//sigma_woodbury = ((*cross_cov).transpose() * fitc_resid_diag_[cluster_i].cwiseInverse().asDiagonal()) * (*cross_cov);
 					}
 					else if (gp_approx_ == "full_scale_tapering") {
 						// factorize residual covariance matrix
@@ -8110,20 +8116,18 @@ namespace GPBoost {
 //							D_inv_B_cross_cov_[cluster_i][0].col(i) = D_inv_rm_[cluster_i][0] * B_cross_cov_[cluster_i][0].col(i);
 //							B_T_D_inv_B_cross_cov_[cluster_i][0].col(i) = B_t_D_inv_rm_[cluster_i][0] * B_cross_cov_[cluster_i][0].col(i);
 //						}
-						begin = std::chrono::steady_clock::now();//only for debugging
-						GPBoost::sparse_dense_matmul(B_rm_[cluster_i][0], (*cross_cov), B_cross_cov_[cluster_i][0], GPU_use_);
+						begin = std::chrono::steady_clock::now();//only for debugging //GPU_INFO: Sparce x Dense seems to be slower on GPU (also just 1 multiplication)
+						GPBoost::sparse_dense_matmul(B_rm_[cluster_i][0], (*cross_cov), B_cross_cov_[cluster_i][0], false);
+						GPBoost::sparse_dense_matmul(D_inv_rm_[cluster_i][0], B_cross_cov_[cluster_i][0], D_inv_B_cross_cov_[cluster_i][0], false);
+						GPBoost::sparse_dense_matmul(B_t_D_inv_rm_[cluster_i][0], B_cross_cov_[cluster_i][0], B_T_D_inv_B_cross_cov_[cluster_i][0], false);
 						end = std::chrono::steady_clock::now();//only for debugging
 						el_time = (double)(std::chrono::duration_cast<std::chrono::microseconds>(end - begin).count()) / 1000000.;//only for debugging
-						Log::REInfo("Sparse MM1 time until = %g ", el_time);
-						GPBoost::sparse_dense_matmul(D_inv_rm_[cluster_i][0], B_cross_cov_[cluster_i][0], D_inv_B_cross_cov_[cluster_i][0], GPU_use_);
-						end = std::chrono::steady_clock::now();//only for debugging
-						el_time = (double)(std::chrono::duration_cast<std::chrono::microseconds>(end - begin).count()) / 1000000.;//only for debugging
-						Log::REInfo("Sparse MM2 time until = %g ", el_time);
-						GPBoost::sparse_dense_matmul(B_t_D_inv_rm_[cluster_i][0], B_cross_cov_[cluster_i][0], B_T_D_inv_B_cross_cov_[cluster_i][0], GPU_use_);
-						end = std::chrono::steady_clock::now();//only for debugging
-						el_time = (double)(std::chrono::duration_cast<std::chrono::microseconds>(end - begin1).count()) / 1000000.;//only for debugging
 						Log::REInfo("Sparse MM time until = %g ", el_time);
+						begin = std::chrono::steady_clock::now();//only for debugging
 						GPBoost::matmul(B_cross_cov_[cluster_i][0].transpose(), D_inv_B_cross_cov_[cluster_i][0], sigma_woodbury, GPU_use_);
+						end = std::chrono::steady_clock::now();//only for debugging
+						el_time = (double)(std::chrono::duration_cast<std::chrono::microseconds>(end - begin).count()) / 1000000.;//only for debugging
+						Log::REInfo("MM time until = %g ", el_time);
 						//sigma_woodbury = B_cross_cov_[cluster_i][0].transpose() * D_inv_B_cross_cov_[cluster_i][0];
 					}
 					sigma_woodbury += sigma_ip_stable;

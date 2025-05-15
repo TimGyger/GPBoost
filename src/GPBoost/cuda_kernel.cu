@@ -94,6 +94,66 @@ namespace GPBoost {
         return true;
     }
 
+    bool try_diag_times_dense_gpu(const vec_t& D, const den_mat_t& B, den_mat_t& C) {
+        int M = B.rows();
+        int N = B.cols();
+
+        if (D.size() != M) {
+            Log::REInfo("[GPU] Dimension mismatch between diagonal and matrix.");
+            return false;
+        }
+
+        C.resize(M, N);
+
+        // Host pointers
+        const double* h_D = D.data();
+        const double* h_B = B.data();
+        double* h_C = C.data();
+
+        // Device pointers
+        double* d_D = nullptr;
+        double* d_B = nullptr;
+        double* d_C = nullptr;
+
+        cudaMalloc((void**)&d_D, M * sizeof(double));
+        cudaMalloc((void**)&d_B, M * N * sizeof(double));
+        cudaMalloc((void**)&d_C, M * N * sizeof(double));
+
+        cudaMemcpy(d_D, h_D, M * sizeof(double), cudaMemcpyHostToDevice);
+        cudaMemcpy(d_B, h_B, M * N * sizeof(double), cudaMemcpyHostToDevice);
+
+        // Create cuBLAS handle
+        cublasHandle_t handle;
+        cublasCreate(&handle);
+
+        // Multiply: C = diag(D) * B (i.e., scale each row of B by D[i])
+        // Use cuBLAS: d_C = diag(d_D) * d_B
+        cublasStatus_t stat = cublasDdgmm(handle,
+            CUBLAS_SIDE_LEFT, // Left = scale rows (use RIGHT to scale columns)
+            M, N,
+            d_B, M,
+            d_D, 1, // stride = 1
+            d_C, M);
+
+        if (stat != CUBLAS_STATUS_SUCCESS) {
+            Log::REInfo("[GPU] cuBLAS Ddgmm failed.");
+            cudaFree(d_D); cudaFree(d_B); cudaFree(d_C);
+            cublasDestroy(handle);
+            return false;
+        }
+
+        cudaMemcpy(h_C, d_C, M * N * sizeof(double), cudaMemcpyDeviceToHost);
+
+        // Clean up
+        cudaFree(d_D);
+        cudaFree(d_B);
+        cudaFree(d_C);
+        cublasDestroy(handle);
+
+        Log::REInfo("[GPU] Diagonal × Dense matrix multiplication completed with cuBLAS.");
+        return true;
+    }
+
     bool try_sparse_dense_matmul_gpu(const sp_mat_rm_t& A, const den_mat_t& B, den_mat_t& C) {
         int M = A.rows(), K = A.cols(), N = B.cols();
         if (K != B.rows()) {
@@ -101,8 +161,7 @@ namespace GPBoost {
             return false;
         }
 
-        C.resize(M, N);
-        C.setZero();
+        //C.resize(M, N);
 
         // Convert Eigen sparse matrix to CSR format (cuSPARSE prefers CSR)
         const int nnz = A.nonZeros();
