@@ -1761,12 +1761,18 @@ namespace GPBoost {
 							D_grad_sigma_resid_inv_cross_cov_T.col(i) = D_grad_rm * D_inv_B_cross_cov_[cluster_i][0].col(i);
 						}
 						// cross_crov_grad *  sigma_resid^-1 * t(cross_cov)
-						cross_cov_grad_sigma_resid_inv_cross_cov_T = (*cross_cov_grad).transpose() * B_T_D_inv_B_cross_cov_[cluster_i][0];
+						//cross_cov_grad_sigma_resid_inv_cross_cov_T = (*cross_cov_grad).transpose() * B_T_D_inv_B_cross_cov_[cluster_i][0];
+						GPBoost::matmul((*cross_cov_grad).transpose(), B_T_D_inv_B_cross_cov_[cluster_i][0], cross_cov_grad_sigma_resid_inv_cross_cov_T, GPU_use_);
 						// cross_cov * B_grad * D^-1 * B * t(cross_cov)
-						den_mat_t cross_cov_B_grad_cross_cov_T = cross_cov_B_grad.transpose() * D_inv_B_cross_cov_[cluster_i][0];
+						//den_mat_t cross_cov_B_grad_cross_cov_T = cross_cov_B_grad.transpose() * D_inv_B_cross_cov_[cluster_i][0];
+						den_mat_t cross_cov_B_grad_cross_cov_T;
+						GPBoost::matmul(cross_cov_B_grad.transpose(), D_inv_B_cross_cov_[cluster_i][0], cross_cov_B_grad_cross_cov_T, GPU_use_);
 						// cross_crov_grad *  sigma_resid^-1 * t(cross_cov) + cross_crov *  sigma_resid^-1 * t(cross_cov_grad) - cross_cov * sigma_resid^-1 * sigma_resid_grad * sigma_resid^-1 * t(cross_cov)
+						//den_mat_t cross_cov_D_grad_cross_cov_T = D_inv_B_cross_cov_[cluster_i][0].transpose() * D_grad_sigma_resid_inv_cross_cov_T;
+						den_mat_t cross_cov_D_grad_cross_cov_T;
+						GPBoost::matmul(D_inv_B_cross_cov_[cluster_i][0].transpose(), D_grad_sigma_resid_inv_cross_cov_T, cross_cov_D_grad_cross_cov_T, GPU_use_);
 						sigma_woodbury_grad = cross_cov_grad_sigma_resid_inv_cross_cov_T + cross_cov_grad_sigma_resid_inv_cross_cov_T.transpose() +
-							cross_cov_B_grad_cross_cov_T.transpose() + cross_cov_B_grad_cross_cov_T - D_inv_B_cross_cov_[cluster_i][0].transpose() * D_grad_sigma_resid_inv_cross_cov_T;
+							cross_cov_B_grad_cross_cov_T.transpose() + cross_cov_B_grad_cross_cov_T - cross_cov_D_grad_cross_cov_T;
 						// t(y) * (vecchia^-1)_grad * y
 						vec_t vecchia_grad_y = (B_grad_rm.transpose() * vecchia_y) - (B_t_D_inv_rm_[cluster_i][0] * (D_grad_rm * vecchia_y)) +
 							(B_t_D_inv_rm_[cluster_i][0] * (B_grad_rm * y_[cluster_i]));
@@ -1789,17 +1795,22 @@ namespace GPBoost {
 						re_comps_resid_[cluster_i][0][j]->ApplyTaper(*(re_comps_resid_[cluster_i][0][j]->dist_), *sigma_resid_grad);
 						if (matrix_inversion_method_ == "cholesky") {
 							// cross_crov_grad *  sigma_resid^-1 * t(cross_cov)
-							cross_cov_grad_sigma_resid_inv_cross_cov_T = ((*cross_cov_grad).transpose()) * sigma_resid_inv_cross_cov_T;
+							//cross_cov_grad_sigma_resid_inv_cross_cov_T = ((*cross_cov_grad).transpose()) * sigma_resid_inv_cross_cov_T;
+							GPBoost::matmul((*cross_cov_grad).transpose(), sigma_resid_inv_cross_cov_T, cross_cov_grad_sigma_resid_inv_cross_cov_T, GPU_use_);
 							// cross_crov_grad *  sigma_resid^-1 * t(cross_cov) + cross_crov *  sigma_resid^-1 * t(cross_cov_grad) - cross_cov * sigma_resid^-1 * sigma_resid_grad * sigma_resid^-1 * t(cross_cov)
+							den_mat_t sigma_resid_grad_sigma_resid_inv_cross_cov_T = (*sigma_resid_grad)* sigma_resid_inv_cross_cov_T;
+							//den_mat_t cross_cov_sigma_resid_inv_sigma_resid_grad_sigma_resid_inv_cross_cov_T = sigma_resid_inv_cross_cov_T.transpose() * sigma_resid_grad_sigma_resid_inv_cross_cov_T;
+							den_mat_t cross_cov_sigma_resid_inv_sigma_resid_grad_sigma_resid_inv_cross_cov_T;
+							GPBoost::matmul(sigma_resid_inv_cross_cov_T.transpose(), sigma_resid_grad_sigma_resid_inv_cross_cov_T, cross_cov_sigma_resid_inv_sigma_resid_grad_sigma_resid_inv_cross_cov_T, GPU_use_);
 							sigma_woodbury_grad = cross_cov_grad_sigma_resid_inv_cross_cov_T + cross_cov_grad_sigma_resid_inv_cross_cov_T.transpose() -
-								sigma_resid_inv_cross_cov_T.transpose() * ((*sigma_resid_grad) * sigma_resid_inv_cross_cov_T);
+								cross_cov_sigma_resid_inv_sigma_resid_grad_sigma_resid_inv_cross_cov_T;
 							grad_cov_aux_par[first_cov_par + ind_par_[j] - 1 + ipar] += 0.5 * ((double)(((*sigma_resid).cwiseProduct(*sigma_resid_grad)).sum()));
 						}
 						else if (matrix_inversion_method_ == "iterative") {// Conjugate Gradient
 							// Derivative of Woodbury preconditioner matrix (Cm + Cmn * diag(Cs)^-1 * Cnm) or (Lambda + t(EVects of Cm) * Cmn * diag(Cs)^-1 * Cnm * EVects of Cm)
 							den_mat_t sigma_woodbury_preconditioner_grad;
 							vec_t diagonal_approx_grad_preconditioner;
-							den_mat_t sigma_ip_stable_grad_preconditioner;
+							den_mat_t sigma_ip_stable_grad_preconditioner, cross_cov_grad_d_inv_cross_cov;
 							std::shared_ptr<den_mat_t> cross_cov_grad_preconditioner;
 							if (cg_preconditioner_type_ == "fitc") {
 								const den_mat_t* cross_cov_preconditioner = re_comps_cross_cov_preconditioner_[cluster_i][0][j]->GetSigmaPtr();
@@ -1807,8 +1818,14 @@ namespace GPBoost {
 								cross_cov_grad_preconditioner = cross_cov_grad;
 								diagonal_approx_grad_preconditioner = (*sigma_resid_grad).diagonal();
 								den_mat_t sigma_cross_cov_diag_sigma_resid_inv = (*cross_cov_preconditioner).transpose() * diagonal_approx_inv_preconditioner_[cluster_i].asDiagonal();
-								den_mat_t cross_cov_grad_d_inv_cross_cov = (*cross_cov_grad).transpose() * (diagonal_approx_inv_preconditioner_[cluster_i].asDiagonal() * (*cross_cov_preconditioner));
-								sigma_woodbury_preconditioner_grad = sigma_ip_stable_grad_preconditioner + cross_cov_grad_d_inv_cross_cov + cross_cov_grad_d_inv_cross_cov.transpose() - sigma_cross_cov_diag_sigma_resid_inv * ((diagonal_approx_grad_preconditioner.asDiagonal()) * sigma_cross_cov_diag_sigma_resid_inv.transpose());
+								den_mat_t D_cross_cov = (diagonal_approx_inv_preconditioner_[cluster_i].asDiagonal()* (*cross_cov_preconditioner));
+								//cross_cov_grad_d_inv_cross_cov = (*cross_cov_grad_preconditioner).transpose() * D_cross_cov;
+								GPBoost::matmul((*cross_cov_grad_preconditioner).transpose(), D_cross_cov, cross_cov_grad_d_inv_cross_cov, GPU_use_);
+								den_mat_t D_grad_cross_cov = (diagonal_approx_grad_preconditioner.asDiagonal()) * sigma_cross_cov_diag_sigma_resid_inv.transpose();
+								//den_mat_t cross_cov_grad_d_inv_grad_cross_cov = sigma_cross_cov_diag_sigma_resid_inv * D_grad_cross_cov;
+								den_mat_t cross_cov_grad_d_inv_grad_cross_cov;
+								GPBoost::matmul(sigma_cross_cov_diag_sigma_resid_inv, D_grad_cross_cov, cross_cov_grad_d_inv_grad_cross_cov, GPU_use_);
+								sigma_woodbury_preconditioner_grad = sigma_ip_stable_grad_preconditioner + cross_cov_grad_d_inv_cross_cov + cross_cov_grad_d_inv_cross_cov.transpose() - cross_cov_grad_d_inv_grad_cross_cov;
 							}
 							den_mat_t sigma_ip_inv_sigma_ip_stable_grad;
 							sigma_ip_inv_sigma_ip_stable_grad = chol_fact_sigma_ip_[cluster_i][0].solve(sigma_ip_stable_grad);
@@ -1828,9 +1845,9 @@ namespace GPBoost {
 							double stochastic_tr = sample_Sigma.mean();
 							// Variance Reduction 
 							if (cg_preconditioner_type_ == "fitc") {
-								const den_mat_t* cross_cov_preconditioner = re_comps_cross_cov_preconditioner_[cluster_i][0][j]->GetSigmaPtr();
-								den_mat_t sigma_cross_cov_diag_sigma_resid_inv = (*cross_cov_preconditioner).transpose() * diagonal_approx_inv_preconditioner_[cluster_i].asDiagonal();
-								den_mat_t cross_cov_grad_d_inv_cross_cov = (*cross_cov_grad_preconditioner).transpose() * (diagonal_approx_inv_preconditioner_[cluster_i].asDiagonal() * (*cross_cov_preconditioner));
+								//const den_mat_t* cross_cov_preconditioner = re_comps_cross_cov_preconditioner_[cluster_i][0][j]->GetSigmaPtr();
+								//den_mat_t sigma_cross_cov_diag_sigma_resid_inv = (*cross_cov_preconditioner).transpose() * diagonal_approx_inv_preconditioner_[cluster_i].asDiagonal();
+								//den_mat_t cross_cov_grad_d_inv_cross_cov = (*cross_cov_grad_preconditioner).transpose() * (diagonal_approx_inv_preconditioner_[cluster_i].asDiagonal() * (*cross_cov_preconditioner));
 								// (Derivative of P) * P^-1 * sample vectors
 								den_mat_t P_G_Z = sigma_grad_Z + (diagonal_approx_grad_preconditioner.asDiagonal()) * rand_vec_probe_P_inv - sigma_resid_grad_Z;
 								// Stochastic Trace (Preconditioner)
@@ -1869,11 +1886,17 @@ namespace GPBoost {
 						grad_cov_aux_par[first_cov_par + ind_par_[j] - 1 + ipar] += 0.5 * FITC_Diag_grad.dot(fitc_resid_diag_[cluster_i].cwiseInverse());
 						// Derivative of Woodbury Matrix
 						vec_t fitc_resid_diag_I = fitc_resid_diag_[cluster_i].cwiseInverse();
-						cross_cov_grad_sigma_resid_inv_cross_cov_T = (*cross_cov).transpose() * fitc_resid_diag_I.asDiagonal() * (*cross_cov_grad);
+						//cross_cov_grad_sigma_resid_inv_cross_cov_T = (*cross_cov).transpose() * fitc_resid_diag_I.asDiagonal() * (*cross_cov_grad);
+						den_mat_t D_cross_cov_grad = fitc_resid_diag_I.asDiagonal() * (*cross_cov_grad);
+						GPBoost::matmul((*cross_cov).transpose(), D_cross_cov_grad, cross_cov_grad_sigma_resid_inv_cross_cov_T, GPU_use_);
 						sigma_woodbury_grad = cross_cov_grad_sigma_resid_inv_cross_cov_T + cross_cov_grad_sigma_resid_inv_cross_cov_T.transpose();
 						fitc_resid_diag_I.array() *= fitc_resid_diag_I.array();
 						fitc_resid_diag_I.array() *= FITC_Diag_grad.array();
-						sigma_woodbury_grad -= (*cross_cov).transpose() * fitc_resid_diag_I.asDiagonal() * (*cross_cov);
+						//sigma_woodbury_grad -= (*cross_cov).transpose() * fitc_resid_diag_I.asDiagonal() * (*cross_cov);
+						den_mat_t D_cross_cov = fitc_resid_diag_I.asDiagonal() * (*cross_cov);
+						den_mat_t cross_cov_D_cross_cov;
+						GPBoost::matmul((*cross_cov).transpose(), D_cross_cov, cross_cov_D_cross_cov, GPU_use_);
+						sigma_woodbury_grad -= cross_cov_D_cross_cov;
 					}
 					// sigma_woodbury^-1 * sigma_woodbury_grad
 					if (matrix_inversion_method_ == "cholesky") {
@@ -8071,7 +8094,7 @@ namespace GPBoost {
 							sigma_ip_stable_preconditioner.diagonal().array() *= JITTER_MULT_IP_FITC_FSA;
 							diagonal_approx_inv_preconditioner_[cluster_i] = diagonal_approx_preconditioner_[cluster_i].cwiseInverse();
 							den_mat_t D_cross_cov;
-							GPBoost::diag_dense_matmul(diagonal_approx_inv_preconditioner_[cluster_i], (*cross_cov_preconditioner), D_cross_cov, GPU_use_);
+							GPBoost::diag_dense_matmul(diagonal_approx_inv_preconditioner_[cluster_i], (*cross_cov_preconditioner), D_cross_cov, false);
 							GPBoost::matmul((*cross_cov_preconditioner).transpose(), D_cross_cov, sigma_woodbury_preconditioner, GPU_use_);
 							//sigma_woodbury_preconditioner = (*cross_cov_preconditioner).transpose() * (diagonal_approx_inv_preconditioner_[cluster_i].asDiagonal() * (*cross_cov_preconditioner));
 							sigma_woodbury_preconditioner += sigma_ip_stable_preconditioner;
@@ -8092,7 +8115,7 @@ namespace GPBoost {
 					if (gp_approx_ == "fitc") {
 						den_mat_t D_cross_cov;
 						begin = std::chrono::steady_clock::now();//only for debugging
-						GPBoost::diag_dense_matmul(fitc_resid_diag_[cluster_i].cwiseInverse(), (*cross_cov), D_cross_cov, GPU_use_);
+						GPBoost::diag_dense_matmul(fitc_resid_diag_[cluster_i].cwiseInverse(), (*cross_cov), D_cross_cov, false);
 						end = std::chrono::steady_clock::now();//only for debugging
 						el_time = (double)(std::chrono::duration_cast<std::chrono::microseconds>(end - begin).count()) / 1000000.;//only for debugging
 						Log::REInfo("DM time until = %g ", el_time);

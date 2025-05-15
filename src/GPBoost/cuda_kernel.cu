@@ -128,7 +128,7 @@ namespace GPBoost {
 
         // Multiply: C = diag(D) * B (i.e., scale each row of B by D[i])
         // Use cuBLAS: d_C = diag(d_D) * d_B
-        /*cublasStatus_t stat = cublasDdgmm(handle,
+        cublasStatus_t stat = cublasDdgmm(handle,
             CUBLAS_SIDE_LEFT, // Left = scale rows (use RIGHT to scale columns)
             M, N,
             d_B, M,
@@ -140,24 +140,7 @@ namespace GPBoost {
             cudaFree(d_D); cudaFree(d_B); cudaFree(d_C);
             cublasDestroy(handle);
             return false;
-        }*/
-
-        // Define kernel inside the host function's translation unit
-        auto diag_dense_mult = [] __global__(const double* D, const double* B, double* C, int N, int M) {
-            int row = blockIdx.x * blockDim.x + threadIdx.x;
-            int col = blockIdx.y * blockDim.y + threadIdx.y;
-            if (row < N && col < M) {
-                // Column-major access
-                C[row + col * N] = D[row] * B[row + col * N];
-            }
-        };
-
-        // Kernel launch configuration
-        dim3 blockDim(16, 16);
-        dim3 gridDim((N + blockDim.x - 1) / blockDim.x, (M + blockDim.y - 1) / blockDim.y);
-
-        // Launch the kernel (must be defined globally or as a lambda with __global__ in CUDA 11+)
-        diag_dense_mult << <gridDim, blockDim >> > (d_D, d_B, d_C, N, M);
+        }
 
         cudaMemcpy(h_C, d_C, M * N * sizeof(double), cudaMemcpyDeviceToHost);
 
