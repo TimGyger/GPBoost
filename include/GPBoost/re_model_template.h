@@ -8044,13 +8044,18 @@ namespace GPBoost {
 						D_inv_B_cross_cov_[cluster_i][0].resize(num_data_per_cluster_[cluster_i], num_ind_points_);
 						B_cross_cov_[cluster_i][0].resize(num_data_per_cluster_[cluster_i], num_ind_points_);
 						B_T_D_inv_B_cross_cov_[cluster_i][0].resize(num_data_per_cluster_[cluster_i], num_ind_points_);
-#pragma omp parallel for schedule(static)   
-						for (int i = 0; i < num_ind_points_; ++i) {
-							B_cross_cov_[cluster_i][0].col(i) = B_rm_[cluster_i][0] * (*cross_cov).col(i);
-							D_inv_B_cross_cov_[cluster_i][0].col(i) = D_inv_rm_[cluster_i][0] * B_cross_cov_[cluster_i][0].col(i);
-							B_T_D_inv_B_cross_cov_[cluster_i][0].col(i) = B_t_D_inv_rm_[cluster_i][0] * B_cross_cov_[cluster_i][0].col(i);
-						}
-						den_mat_t sigma_woodbury = B_cross_cov_[cluster_i][0].transpose() * D_inv_B_cross_cov_[cluster_i][0];
+
+						GPBoost::sparse_dense_matmul(B_rm_[cluster_i][0], (*cross_cov), B_cross_cov_[cluster_i][0], GPU_use_);
+						GPBoost::sparse_dense_matmul(D_inv_rm_[cluster_i][0], B_cross_cov_[cluster_i][0], D_inv_B_cross_cov_[cluster_i][0], GPU_use_);
+						GPBoost::sparse_dense_matmul(B_t_D_inv_rm_[cluster_i][0], B_cross_cov_[cluster_i][0], B_T_D_inv_B_cross_cov_[cluster_i][0], GPU_use_);
+//#pragma omp parallel for schedule(static)   
+//						for (int i = 0; i < num_ind_points_; ++i) {
+//							B_cross_cov_[cluster_i][0].col(i) = B_rm_[cluster_i][0] * (*cross_cov).col(i);
+//							D_inv_B_cross_cov_[cluster_i][0].col(i) = D_inv_rm_[cluster_i][0] * B_cross_cov_[cluster_i][0].col(i);
+//							B_T_D_inv_B_cross_cov_[cluster_i][0].col(i) = B_t_D_inv_rm_[cluster_i][0] * B_cross_cov_[cluster_i][0].col(i);
+//						}
+						//den_mat_t sigma_woodbury = B_cross_cov_[cluster_i][0].transpose() * D_inv_B_cross_cov_[cluster_i][0];
+						GPBoost::matmul(B_cross_cov_[cluster_i][0].transpose(), D_inv_B_cross_cov_[cluster_i][0], sigma_woodbury, GPU_use_);
 						sigma_woodbury += sigma_ip_stable;
 						sigma_woodbury_[cluster_i] = sigma_woodbury;
 						chol_fact_sigma_woodbury_[cluster_i].compute(sigma_woodbury);
@@ -8099,13 +8104,20 @@ namespace GPBoost {
 						D_inv_B_cross_cov_[cluster_i][0].resize(num_data_per_cluster_[cluster_i], num_ind_points_);
 						B_cross_cov_[cluster_i][0].resize(num_data_per_cluster_[cluster_i], num_ind_points_);
 						B_T_D_inv_B_cross_cov_[cluster_i][0].resize(num_data_per_cluster_[cluster_i], num_ind_points_);
-#pragma omp parallel for schedule(static)   
-						for (int i = 0; i < num_ind_points_; ++i) {
-							B_cross_cov_[cluster_i][0].col(i) = B_rm_[cluster_i][0] * (*cross_cov).col(i);
-							D_inv_B_cross_cov_[cluster_i][0].col(i) = D_inv_rm_[cluster_i][0] * B_cross_cov_[cluster_i][0].col(i);
-							B_T_D_inv_B_cross_cov_[cluster_i][0].col(i) = B_t_D_inv_rm_[cluster_i][0] * B_cross_cov_[cluster_i][0].col(i);
-						}
-						sigma_woodbury = B_cross_cov_[cluster_i][0].transpose() * D_inv_B_cross_cov_[cluster_i][0];
+//#pragma omp parallel for schedule(static)   
+//						for (int i = 0; i < num_ind_points_; ++i) {
+//							B_cross_cov_[cluster_i][0].col(i) = B_rm_[cluster_i][0] * (*cross_cov).col(i);
+//							D_inv_B_cross_cov_[cluster_i][0].col(i) = D_inv_rm_[cluster_i][0] * B_cross_cov_[cluster_i][0].col(i);
+//							B_T_D_inv_B_cross_cov_[cluster_i][0].col(i) = B_t_D_inv_rm_[cluster_i][0] * B_cross_cov_[cluster_i][0].col(i);
+//						}
+						GPBoost::sparse_dense_matmul(B_rm_[cluster_i][0], (*cross_cov), B_cross_cov_[cluster_i][0], GPU_use_);
+						GPBoost::sparse_dense_matmul(D_inv_rm_[cluster_i][0], B_cross_cov_[cluster_i][0], D_inv_B_cross_cov_[cluster_i][0], GPU_use_);
+						GPBoost::sparse_dense_matmul(B_t_D_inv_rm_[cluster_i][0], B_cross_cov_[cluster_i][0], B_T_D_inv_B_cross_cov_[cluster_i][0], GPU_use_);
+						end = std::chrono::steady_clock::now();//only for debugging
+						el_time = (double)(std::chrono::duration_cast<std::chrono::microseconds>(end - begin1).count()) / 1000000.;//only for debugging
+						Log::REInfo("Sparse MM time until = %g ", el_time);
+						GPBoost::matmul(B_cross_cov_[cluster_i][0].transpose(), D_inv_B_cross_cov_[cluster_i][0], sigma_woodbury, GPU_use_);
+						//sigma_woodbury = B_cross_cov_[cluster_i][0].transpose() * D_inv_B_cross_cov_[cluster_i][0];
 					}
 					sigma_woodbury += sigma_ip_stable;
 
@@ -8118,8 +8130,8 @@ namespace GPBoost {
 					//// adding jitter to this Woodbury matrix changes the results too much without helping really (06.11.2024)
 					//sigma_woodbury.diagonal().array() *= JITTER_MULT_IP_FITC_FSA;
 					begin = std::chrono::steady_clock::now();//only for debugging
-					cholesky_solver(chol_fact_sigma_woodbury_[cluster_i], sigma_woodbury, GPU_use_);
-					//chol_fact_sigma_woodbury_[cluster_i].compute(sigma_woodbury);
+					//GPBoost::cholesky_solver(chol_fact_sigma_woodbury_[cluster_i], sigma_woodbury, GPU_use_);
+					chol_fact_sigma_woodbury_[cluster_i].compute(sigma_woodbury);
 					end = std::chrono::steady_clock::now();//only for debugging
 					el_time = (double)(std::chrono::duration_cast<std::chrono::microseconds>(end - begin).count()) / 1000000.;//only for debugging
 					Log::REInfo("Chol time until = %g ", el_time);

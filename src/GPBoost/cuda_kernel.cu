@@ -11,7 +11,8 @@
 #include <GPBoost/GP_utils.h>
 #include <cuda_runtime.h>
 #include <cublas_v2.h>
-#include <cusolverDn.h>
+#include <cusparse.h>
+//#include <cusolverDn.h>
 #include <LightGBM/utils/log.h>
 using LightGBM::Log;
 
@@ -93,7 +94,108 @@ namespace GPBoost {
         return true;
     }
 
-    bool cholesky_cusolver_to_eigen(chol_den_mat_t& llt, const den_mat_t& A_input) {
+    bool try_sparse_dense_matmul_gpu(const sp_mat_rm_t& A, const den_mat_t& B, den_mat_t& C) {
+        int M = A.rows(), K = A.cols(), N = B.cols();
+        if (K != B.rows()) {
+            Log::REInfo("[GPU] Dimension mismatch.");
+            return false;
+        }
+
+        C.resize(M, N);
+        C.setZero();
+
+        // Convert Eigen sparse matrix to CSR format (cuSPARSE prefers CSR)
+        sp_mat_rm_t A_rm = A;  // Already RowMajor
+        const int nnz = A_rm.nonZeros();
+        const int* h_csrOffsets = A_rm.outerIndexPtr();  // Row pointers
+        const int* h_columns = A_rm.innerIndexPtr();     // Column indices
+        const double* h_values = A_rm.valuePtr();        // Non-zero values
+
+        // Allocate device memory
+        int* d_csrOffsets;
+        int* d_columns;
+        double* d_values;
+        double* d_B;
+        double* d_C;
+
+        cudaMalloc((void**)&d_csrOffsets, (M + 1) * sizeof(int));
+        cudaMalloc((void**)&d_columns, nnz * sizeof(int));
+        cudaMalloc((void**)&d_values, nnz * sizeof(double));
+        cudaMalloc((void**)&d_B, K * N * sizeof(double));
+        cudaMalloc((void**)&d_C, M * N * sizeof(double));
+
+        cudaMemcpy(d_csrOffsets, h_csrOffsets, (M + 1) * sizeof(int), cudaMemcpyHostToDevice);
+        cudaMemcpy(d_columns, h_columns, nnz * sizeof(int), cudaMemcpyHostToDevice);
+        cudaMemcpy(d_values, h_values, nnz * sizeof(double), cudaMemcpyHostToDevice);
+        cudaMemcpy(d_B, B.data(), K * N * sizeof(double), cudaMemcpyHostToDevice);
+        cudaMemset(d_C, 0, M * N * sizeof(double));
+
+        // Create cuSPARSE handle and descriptors
+        cusparseHandle_t handle;
+        cusparseCreate(&handle);
+
+        cusparseSpMatDescr_t matA;
+        cusparseDnMatDescr_t matB, matC;
+        cusparseCreateCsr(&matA, M, K, nnz,
+            d_csrOffsets, d_columns, d_values,
+            CUSPARSE_INDEX_32I, CUSPARSE_INDEX_32I,
+            CUSPARSE_INDEX_BASE_ZERO, CUDA_R_64F);
+
+        cusparseCreateDnMat(&matB, K, N, K, d_B, CUDA_R_64F, CUSPARSE_ORDER_COL);
+        cusparseCreateDnMat(&matC, M, N, M, d_C, CUDA_R_64F, CUSPARSE_ORDER_COL);
+
+        const double alpha = 1.0;
+        const double beta = 0.0;
+
+        size_t bufferSize = 0;
+        void* dBuffer = nullptr;
+        cusparseSpMM_bufferSize(handle,
+            CUSPARSE_OPERATION_NON_TRANSPOSE,
+            CUSPARSE_OPERATION_NON_TRANSPOSE,
+            &alpha, matA, matB, &beta, matC,
+            CUDA_R_64F, CUSPARSE_MM_ALG_DEFAULT,
+            &bufferSize);
+        cudaMalloc(&dBuffer, bufferSize);
+
+        cusparseStatus_t stat = cusparseSpMM(handle,
+            CUSPARSE_OPERATION_NON_TRANSPOSE,
+            CUSPARSE_OPERATION_NON_TRANSPOSE,
+            &alpha, matA, matB, &beta, matC,
+            CUDA_R_64F, CUSPARSE_MM_ALG_DEFAULT,
+            dBuffer);
+
+        if (stat != CUSPARSE_STATUS_SUCCESS) {
+            Log::REInfo("[GPU] cuSPARSE SpMM failed.");
+            cusparseDestroySpMat(matA);
+            cusparseDestroyDnMat(matB);
+            cusparseDestroyDnMat(matC);
+            cusparseDestroy(handle);
+            cudaFree(dBuffer); cudaFree(d_csrOffsets); cudaFree(d_columns);
+            cudaFree(d_values); cudaFree(d_B); cudaFree(d_C);
+            return false;
+        }
+
+        // Copy result back to host
+        cudaMemcpy(C.data(), d_C, M * N * sizeof(double), cudaMemcpyDeviceToHost);
+
+        // Clean up
+        cusparseDestroySpMat(matA);
+        cusparseDestroyDnMat(matB);
+        cusparseDestroyDnMat(matC);
+        cusparseDestroy(handle);
+
+        cudaFree(dBuffer);
+        cudaFree(d_csrOffsets);
+        cudaFree(d_columns);
+        cudaFree(d_values);
+        cudaFree(d_B);
+        cudaFree(d_C);
+
+        Log::REInfo("[GPU] Sparse x Dense matrix multiplication completed with cuSPARSE.");
+        return true;
+    }
+
+    /*bool cholesky_cusolver_to_eigen(chol_den_mat_t& llt, const den_mat_t& A_input) {
         int N = A_input.rows();
         if (A_input.cols() != N) return false;
 
@@ -137,7 +239,7 @@ namespace GPBoost {
         cusolverDnDestroy(handle);
 
         return true;
-    }
+    }*/
 
 }  // namespace GPBoost
 

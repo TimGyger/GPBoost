@@ -565,7 +565,8 @@ if(USE_CUDA_GP)
     _gpboost
     CUDA::cudart
     CUDA::cublas
-    CUDA::cusolver
+    CUDA:cusparse
+    #CUDA::cusolver
   )
 
 endif(USE_CUDA_GP)
