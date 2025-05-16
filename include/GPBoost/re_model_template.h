@@ -10054,6 +10054,7 @@ namespace GPBoost {
 					(gauss_likelihood_ && gp_approx_ == "full_scale_tapering" && calc_pred_var && matrix_inversion_method_ != "iterative" && calc_pred_cov_var_FSA_cholesky_ != "exact");
 				if (calc_pred_cov || calc_diag_resid_var_pred) {
 					//TriangularSolveGivenCholesky<chol_den_mat_t, den_mat_t, den_mat_t, den_mat_t>(chol_fact_sigma_ip_[cluster_i][0], cross_cov_pred_ip.transpose(), chol_ip_cross_cov_ip_pred, false);
+					chol_ip_cross_cov_ip_pred = cross_cov_pred_ip.transpose();
 					GPBoost::solve_lower_triangular(chol_fact_sigma_ip_[cluster_i][0], cross_cov_pred_ip.transpose(), chol_ip_cross_cov_ip_pred, GPU_use_);
 				}
 				vec_t resid_diag_pred;
@@ -10108,7 +10109,7 @@ namespace GPBoost {
 							resid_obs_inv_resid_pred_obs_t = fitc_resid_diag_[cluster_i].cwiseInverse().asDiagonal() * (fitc_resid_pred_obs.transpose());
 							Maux_rhs -= (*cross_cov).transpose() * resid_obs_inv_resid_pred_obs_t;
 						}
-						den_mat_t woodburry_part_sqrt;
+						den_mat_t woodburry_part_sqrt = Maux_rhs;
 						//TriangularSolveGivenCholesky<chol_den_mat_t, den_mat_t, den_mat_t, den_mat_t>(chol_fact_sigma_woodbury_[cluster_i], Maux_rhs, woodburry_part_sqrt, false);
 						GPBoost::solve_lower_triangular(chol_fact_sigma_woodbury_[cluster_i], Maux_rhs, woodburry_part_sqrt, GPU_use_);
 						if (calc_pred_cov) {
