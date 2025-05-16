@@ -10110,8 +10110,8 @@ namespace GPBoost {
 							Maux_rhs -= (*cross_cov).transpose() * resid_obs_inv_resid_pred_obs_t;
 						}
 						den_mat_t woodburry_part_sqrt;
-						//TriangularSolveGivenCholesky<chol_den_mat_t, den_mat_t, den_mat_t, den_mat_t>(chol_fact_sigma_woodbury_[cluster_i], Maux_rhs, woodburry_part_sqrt, false);
-						GPBoost::solve_lower_triangular(chol_fact_sigma_woodbury_[cluster_i], Maux_rhs, woodburry_part_sqrt, GPU_use_);
+						TriangularSolveGivenCholesky<chol_den_mat_t, den_mat_t, den_mat_t, den_mat_t>(chol_fact_sigma_woodbury_[cluster_i], Maux_rhs, woodburry_part_sqrt, false);
+						//GPBoost::solve_lower_triangular(chol_fact_sigma_woodbury_[cluster_i], Maux_rhs, woodburry_part_sqrt, GPU_use_);
 						if (calc_pred_cov) {
 							T_mat Maux;
 							ConvertTo_T_mat_FromDense<T_mat>(woodburry_part_sqrt.transpose() * woodburry_part_sqrt, Maux);
