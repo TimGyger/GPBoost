@@ -2292,6 +2292,10 @@ namespace GPBoost {
 			bool CalcYAux_already_done,
 			bool CalcYtilde_already_done,
 			bool redetermine_neighbors_vecchia) {
+			Log::REInfo("EvalNegLogLikelihood");//only for debugging
+			std::chrono::steady_clock::time_point begin, end;//only for debugging
+			double el_time;//only for debugging
+			begin = std::chrono::steady_clock::now();//only for debugging
 			CHECK(gauss_likelihood_);
 			CHECK(!(CalcYAux_already_done && !CalcCovFactor_already_done));// CalcYAux_already_done && !CalcCovFactor_already_done makes no sense
 			if (fixed_effects != nullptr) {
@@ -2526,6 +2530,9 @@ namespace GPBoost {
 				}
 			}
 			negll = yTPsiInvy_ / 2. / cov_pars[0] + log_det_Psi_ / 2. + num_data_ / 2. * (std::log(cov_pars[0]) + std::log(2 * M_PI));
+			end = std::chrono::steady_clock::now();//only for debugging
+			el_time = (double)(std::chrono::duration_cast<std::chrono::microseconds>(end - begin).count()) / 1000000.;//only for debugging
+			Log::REInfo("EvalNegLogLikelihood time until = %g ", el_time);
 		}//end EvalNegLogLikelihood
 
 		/*!
@@ -6339,6 +6346,10 @@ namespace GPBoost {
 			std::vector<std::shared_ptr<RECompGP<den_mat_t>>>& re_comps_cross_cov_cluster_i,
 			std::vector<std::shared_ptr<RECompGP<T_mat>>>& re_comps_resid_cluster_i,
 			bool for_prediction_new_cluster) {
+			Log::REInfo("CreateREComponentsFITC_FSA");//only for debugging
+			std::chrono::steady_clock::time_point begin, end;//only for debugging
+			double el_time;//only for debugging
+			begin = std::chrono::steady_clock::now();//only for debugging
 			int num_ind_points = num_ind_points_;
 			if (for_prediction_new_cluster) {
 				num_ind_points = std::min(num_ind_points_, num_data_per_cluster_[cluster_i]);
@@ -6462,6 +6473,9 @@ namespace GPBoost {
 			if (num_gp_rand_coef_ > 0) {
 				Log::REFatal("Random coefficients are currently not supported for '%s' approximation ", ind_points_selection_.c_str());
 			}
+			end = std::chrono::steady_clock::now();//only for debugging
+			el_time = (double)(std::chrono::duration_cast<std::chrono::microseconds>(end - begin).count()) / 1000000.;//only for debugging
+			Log::REInfo("CreateREComponentsFITC_FSA time until = %g ", el_time);
 		}//end CreateREComponentsFITC_FSA
 
 		/*!
@@ -6638,6 +6652,10 @@ namespace GPBoost {
 		* \brief Calculate covariance matrices of the components and some auxiliary quantities for some approximations
 		*/
 		void CalcSigmaComps() {
+			Log::REInfo("CalcSigmaComps");//only for debugging
+			std::chrono::steady_clock::time_point begin, end;//only for debugging
+			double el_time;//only for debugging
+			begin = std::chrono::steady_clock::now();//only for debugging
 			CHECK(gp_approx_ != "vecchia");
 			for (const auto& cluster_i : unique_clusters_) {
 				for (int j = 0; j < num_comps_total_; ++j) {
@@ -6650,17 +6668,10 @@ namespace GPBoost {
 						const den_mat_t* cross_cov = re_comps_cross_cov_[cluster_i][0][j]->GetSigmaPtr();
 						if (gp_approx_ == "fitc") {
 							den_mat_t sigma_ip_Ihalf_sigma_cross_covT = (*cross_cov).transpose();
-							Log::REInfo("start");//only for debugging
-							std::chrono::steady_clock::time_point begin, end;//only for debugging
-							double el_time;//only for debugging
-							begin = std::chrono::steady_clock::now();//only for debugging
 							//TriangularSolveGivenCholesky<chol_den_mat_t, den_mat_t, den_mat_t, den_mat_t>(chol_fact_sigma_ip_[cluster_i][0],
 							//	sigma_ip_Ihalf_sigma_cross_covT, sigma_ip_Ihalf_sigma_cross_covT, false);
 							GPBoost::solve_lower_triangular(chol_fact_sigma_ip_[cluster_i][0], 
 								sigma_ip_Ihalf_sigma_cross_covT, sigma_ip_Ihalf_sigma_cross_covT, GPU_use_);
-							end = std::chrono::steady_clock::now();//only for debugging
-							el_time = (double)(std::chrono::duration_cast<std::chrono::microseconds>(end - begin).count()) / 1000000.;//only for debugging
-							Log::REInfo("LS time until = %g ", el_time);
 							if (gauss_likelihood_) {
 								fitc_resid_diag_[cluster_i] = vec_t::Ones(re_comps_cross_cov_[cluster_i][0][0]->GetNumUniqueREs());//add nugget effect variance
 							}
@@ -6718,6 +6729,9 @@ namespace GPBoost {
 					}
 				}
 			}//end !gauss_likelihood_
+			end = std::chrono::steady_clock::now();//only for debugging
+			el_time = (double)(std::chrono::duration_cast<std::chrono::microseconds>(end - begin).count()) / 1000000.;//only for debugging
+			Log::REInfo("CalcSigmaComps time until = %g ", el_time);
 		}//end CalcSigmaComps
 
 		/*!
@@ -7940,6 +7954,10 @@ namespace GPBoost {
 		}//end CalcCovFactorVecchia
 
 		void Calc_FITC_Preconditioner_Vecchia() {
+			Log::REInfo("Calc_FITC_Preconditioner_Vecchia");//only for debugging
+			std::chrono::steady_clock::time_point begin, end;//only for debugging
+			double el_time;//only for debugging
+			begin = std::chrono::steady_clock::now();//only for debugging
 			CHECK(!gauss_likelihood_ && matrix_inversion_method_ == "iterative" && cg_preconditioner_type_ == "fitc");
 			for (const auto& cluster_i : unique_clusters_) {
 				std::shared_ptr<RECompGP<den_mat_t>> re_comp_gp_clus0 = re_comps_vecchia_[cluster_i][0][0];
@@ -8027,6 +8045,9 @@ namespace GPBoost {
 						chol_ip_cross_cov_preconditioner_[cluster_i][0], chol_ip_cross_cov_preconditioner_[cluster_i][0], false);
 				}
 			}//end loop over unique_clusters_
+			end = std::chrono::steady_clock::now();//only for debugging
+			el_time = (double)(std::chrono::duration_cast<std::chrono::microseconds>(end - begin).count()) / 1000000.;//only for debugging
+			Log::REInfo("Calc_FITC_Preconditioner_Vecchia time until = %g ", el_time);
 		}//end Calc_FITC_Preconditioner_Vecchia
 
 		/*!
