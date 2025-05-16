@@ -1742,9 +1742,6 @@ namespace GPBoost {
 						//den_mat_t sigma_ip_inv_sigma_ip_stable_grad = chol_fact_sigma_ip_[cluster_i][0].solve(sigma_ip_stable_grad);
 						den_mat_t sigma_ip_inv_sigma_ip_stable_grad;
 						GPBoost::solve_linear_sys(chol_fact_sigma_ip_[cluster_i][0], sigma_ip_stable_grad, sigma_ip_inv_sigma_ip_stable_grad, GPU_use_);
-						end = std::chrono::steady_clock::now();//only for debugging
-						el_time = (double)(std::chrono::duration_cast<std::chrono::microseconds>(end - begin).count()) / 1000000.;//only for debugging
-						Log::REInfo("CalcGradPars_FITC_FSA_GaussLikelihood_Cluster_i 0 time until = %g ", el_time);
 						grad_cov_aux_par[first_cov_par + ind_par_[j] - 1 + ipar] -= 0.5 * sigma_ip_inv_sigma_ip_stable_grad.trace();
 					}
 					grad_cov_aux_par[first_cov_par + ind_par_[j] - 1 + ipar] += ((0.5 * sigma_ip_inv_cross_cov_y_aux.dot((sigma_ip_stable_grad)*sigma_ip_inv_cross_cov_y_aux)
@@ -1795,7 +1792,9 @@ namespace GPBoost {
 						re_comps_resid_[cluster_i][0][j]->CalcSigma();
 						std::shared_ptr<T_mat> sigma_resid_grad = re_comps_resid_[cluster_i][0][j]->GetZSigmaZtGrad(ipar, true, 1.);
 						// sigma_ip^-1 * sigma_cross_cov
-						den_mat_t sigma_ip_inv_sigma_cross_cov = chol_fact_sigma_ip_[cluster_i][0].solve((*cross_cov).transpose());
+						//den_mat_t sigma_ip_inv_sigma_cross_cov = chol_fact_sigma_ip_[cluster_i][0].solve((*cross_cov).transpose());
+						den_mat_t sigma_ip_inv_sigma_cross_cov;
+						GPBoost::solve_linear_sys(chol_fact_sigma_ip_[cluster_i][0], (*cross_cov).transpose(), sigma_ip_inv_sigma_cross_cov, GPU_use_);
 						// Subtract gradient of predictive process covariance
 						SubtractProdFromMat<T_mat>(*sigma_resid_grad, -sigma_ip_inv_sigma_cross_cov, sigma_ip_stable_grad * sigma_ip_inv_sigma_cross_cov, true);
 						SubtractProdFromMat<T_mat>(*sigma_resid_grad, (*cross_cov_grad).transpose(), sigma_ip_inv_sigma_cross_cov, false);
@@ -1837,7 +1836,8 @@ namespace GPBoost {
 								sigma_woodbury_preconditioner_grad = sigma_ip_stable_grad_preconditioner + cross_cov_grad_d_inv_cross_cov + cross_cov_grad_d_inv_cross_cov.transpose() - cross_cov_grad_d_inv_grad_cross_cov;
 							}
 							den_mat_t sigma_ip_inv_sigma_ip_stable_grad;
-							sigma_ip_inv_sigma_ip_stable_grad = chol_fact_sigma_ip_[cluster_i][0].solve(sigma_ip_stable_grad);
+							//sigma_ip_inv_sigma_ip_stable_grad = chol_fact_sigma_ip_[cluster_i][0].solve(sigma_ip_stable_grad);
+							GPBoost::solve_linear_sys(chol_fact_sigma_ip_[cluster_i][0], sigma_ip_stable_grad, sigma_ip_inv_sigma_ip_stable_grad, GPU_use_);
 							// (Derivative of Sigma) * P^-1 * sample vectors
 							den_mat_t sigma_resid_grad_Z(num_data_per_cluster_[cluster_i], rand_vec_probe_P_inv.cols());
 							sigma_resid_grad_Z.setZero();
@@ -1885,23 +1885,14 @@ namespace GPBoost {
 						//den_mat_t sigma_ip_inv_sigma_cross_cov = chol_fact_sigma_ip_[cluster_i][0].solve((*cross_cov).transpose());
 						den_mat_t sigma_ip_inv_sigma_cross_cov;
 						GPBoost::solve_linear_sys(chol_fact_sigma_ip_[cluster_i][0], (*cross_cov).transpose(), sigma_ip_inv_sigma_cross_cov, GPU_use_);
-						end = std::chrono::steady_clock::now();//only for debugging
-						el_time = (double)(std::chrono::duration_cast<std::chrono::microseconds>(end - begin).count()) / 1000000.;//only for debugging
-						Log::REInfo("CalcGradPars_FITC_FSA_GaussLikelihood_Cluster_i 1 time until = %g ", el_time);
 						//den_mat_t sigma_ip_grad_inv_sigma_cross_cov = sigma_ip_stable_grad * sigma_ip_inv_sigma_cross_cov;
 						den_mat_t sigma_ip_grad_inv_sigma_cross_cov;
 						GPBoost::matmul(sigma_ip_stable_grad, sigma_ip_inv_sigma_cross_cov, sigma_ip_grad_inv_sigma_cross_cov, GPU_use_);
-						end = std::chrono::steady_clock::now();//only for debugging
-						el_time = (double)(std::chrono::duration_cast<std::chrono::microseconds>(end - begin).count()) / 1000000.;//only for debugging
-						Log::REInfo("CalcGradPars_FITC_FSA_GaussLikelihood_Cluster_i 2 time until = %g ", el_time);
 #pragma omp parallel for schedule(static)
 						for (int ii = 0; ii < num_data_per_cluster_[cluster_i]; ++ii) {
 							FITC_Diag_grad[ii] -= 2 * sigma_ip_inv_sigma_cross_cov.col(ii).dot((*cross_cov_grad).transpose().col(ii))
 								- sigma_ip_inv_sigma_cross_cov.col(ii).dot(sigma_ip_grad_inv_sigma_cross_cov.col(ii));
 						}
-						end = std::chrono::steady_clock::now();//only for debugging
-						el_time = (double)(std::chrono::duration_cast<std::chrono::microseconds>(end - begin).count()) / 1000000.;//only for debugging
-						Log::REInfo("CalcGradPars_FITC_FSA_GaussLikelihood_Cluster_i 3 time until = %g ", el_time);
 						sigma_ip_inv_sigma_cross_cov.resize(0, 0);
 						sigma_ip_grad_inv_sigma_cross_cov.resize(0, 0);
 						grad_cov_aux_par[first_cov_par + ind_par_[j] - 1 + ipar] -= 0.5 * y_aux_[cluster_i].dot(FITC_Diag_grad.asDiagonal() * y_aux_[cluster_i]) / cov_pars[0];
@@ -1923,7 +1914,9 @@ namespace GPBoost {
 					// sigma_woodbury^-1 * sigma_woodbury_grad
 					if (matrix_inversion_method_ == "cholesky") {
 						sigma_woodbury_grad += (sigma_ip_stable_grad);
-						den_mat_t sigma_woodbury_inv_sigma_woodbury_grad = chol_fact_sigma_woodbury_[cluster_i].solve(sigma_woodbury_grad);
+						//den_mat_t sigma_woodbury_inv_sigma_woodbury_grad = chol_fact_sigma_woodbury_[cluster_i].solve(sigma_woodbury_grad);
+						den_mat_t sigma_woodbury_inv_sigma_woodbury_grad;
+						GPBoost::solve_linear_sys(chol_fact_sigma_woodbury_[cluster_i], sigma_woodbury_grad, sigma_woodbury_inv_sigma_woodbury_grad, GPU_use_);
 						grad_cov_aux_par[first_cov_par + ind_par_[j] - 1 + ipar] += 0.5 * ((sigma_woodbury_inv_sigma_woodbury_grad.trace()));
 					}
 				}//end loop over ipar
@@ -4428,8 +4421,10 @@ namespace GPBoost {
 						den_mat_t sigma_ip_stable = *(re_comps_ip_cluster_i[0]->GetZSigmaZt());
 						sigma_ip_stable.diagonal().array() *= JITTER_MULT_IP_FITC_FSA;
 						chol_fact_sigma_ip_[cluster_i][0].compute(sigma_ip_stable);
-						TriangularSolveGivenCholesky<chol_den_mat_t, den_mat_t, den_mat_t, den_mat_t>(chol_fact_sigma_ip_[cluster_i][0],
-							(*(re_comps_cross_cov_cluster_i[0]->GetZSigmaZt())).transpose(), chol_ip_cross_cov_[cluster_i][0], false);
+						//TriangularSolveGivenCholesky<chol_den_mat_t, den_mat_t, den_mat_t, den_mat_t>(chol_fact_sigma_ip_[cluster_i][0],
+						//	(*(re_comps_cross_cov_cluster_i[0]->GetZSigmaZt())).transpose(), chol_ip_cross_cov_[cluster_i][0], false);
+						GPBoost::solve_lower_triangular(chol_fact_sigma_ip_[cluster_i][0],
+							(*(re_comps_cross_cov_cluster_i[0]->GetZSigmaZt())).transpose(), chol_ip_cross_cov_[cluster_i][0], GPU_use_);
 						if (gp_approx_ == "full_scale_vecchia") {
 							if (piv_chol_rank_ == num_ind_points_) {
 								piv_chol_rank_ = num_ind_points;
@@ -8776,7 +8771,9 @@ namespace GPBoost {
 						sigma_resid = re_comps_resid_[cluster_i][0][j]->GetZSigmaZt();
 					}
 					const den_mat_t* cross_cov = re_comps_cross_cov_[cluster_i][0][j]->GetSigmaPtr();
-					den_mat_t sigma_ip_inv_sigma_cross_cov = chol_fact_sigma_ip_[cluster_i][0].solve((*cross_cov).transpose());
+					//den_mat_t sigma_ip_inv_sigma_cross_cov = chol_fact_sigma_ip_[cluster_i][0].solve((*cross_cov).transpose());
+					den_mat_t sigma_ip_inv_sigma_cross_cov;
+					GPBoost::solve_linear_sys(chol_fact_sigma_ip_[cluster_i][0], (*cross_cov).transpose(), sigma_ip_inv_sigma_cross_cov, GPU_use_);
 					int num_par_comp = re_comps_ip_[cluster_i][0][j]->num_cov_par_;
 					// Inverse of Sigma residual times cross covariance
 					den_mat_t Sigma_inv_cross_cov;
@@ -9960,7 +9957,9 @@ namespace GPBoost {
 				std::shared_ptr<RECompGP<T_mat>> re_comps_resid_po_cluster_i = std::dynamic_pointer_cast<RECompGP<T_mat>>(re_comps_resid_[cluster_i][0][0]);
 				re_comps_resid_po_cluster_i->AddPredCovMatrices(re_comps_resid_po_cluster_i->coords_, gp_coords_mat_pred, sigma_resid_pred_obs,
 					cov_mat_pred_obs, true, false, true, nullptr, true, cross_dist_resid);
-				den_mat_t sigma_ip_inv_cross_cov_T = chol_fact_sigma_ip_[cluster_i][0].solve((*cross_cov).transpose());// Calculate Cm_inv * C_mn part of predictive process
+				//den_mat_t sigma_ip_inv_cross_cov_T = chol_fact_sigma_ip_[cluster_i][0].solve((*cross_cov).transpose());// Calculate Cm_inv * C_mn part of predictive process
+				den_mat_t sigma_ip_inv_cross_cov_T;
+				GPBoost::solve_linear_sys(chol_fact_sigma_ip_[cluster_i][0], (*cross_cov).transpose(), sigma_ip_inv_cross_cov_T, GPU_use_);
 				SubtractProdFromNonSqMat<T_mat>(sigma_resid_pred_obs, cross_cov_pred_ip.transpose(), sigma_ip_inv_cross_cov_T);// Subtract predictive process (prediction) covariance
 				re_comps_resid_po_cluster_i->ApplyTaper(cross_dist_resid, sigma_resid_pred_obs);// Apply taper
 			}//end gp_approx_ == "full_scale_tapering"
@@ -9992,7 +9991,8 @@ namespace GPBoost {
 								{
 									if (!has_fitc_correction) {
 										has_fitc_correction = true;
-										sigma_ip_inv_cross_cov_T = chol_fact_sigma_ip_[cluster_i][0].solve((*cross_cov).transpose());
+										//sigma_ip_inv_cross_cov_T = chol_fact_sigma_ip_[cluster_i][0].solve((*cross_cov).transpose());
+										GPBoost::solve_linear_sys(chol_fact_sigma_ip_[cluster_i][0], (*cross_cov).transpose(), sigma_ip_inv_cross_cov_T, GPU_use_);
 									}
 								}
 								double fitc_corr_ij = sigma2 - (cross_cov_pred_ip.row(ii)).dot(sigma_ip_inv_cross_cov_T.col(jj));
@@ -10053,7 +10053,9 @@ namespace GPBoost {
 				bool calc_diag_resid_var_pred = (gp_approx_ == "fitc") ||
 					(gauss_likelihood_ && gp_approx_ == "full_scale_tapering" && calc_pred_var && matrix_inversion_method_ != "iterative" && calc_pred_cov_var_FSA_cholesky_ != "exact");
 				if (calc_pred_cov || calc_diag_resid_var_pred) {
-					TriangularSolveGivenCholesky<chol_den_mat_t, den_mat_t, den_mat_t, den_mat_t>(chol_fact_sigma_ip_[cluster_i][0], cross_cov_pred_ip.transpose(), chol_ip_cross_cov_ip_pred, false);
+					//TriangularSolveGivenCholesky<chol_den_mat_t, den_mat_t, den_mat_t, den_mat_t>(chol_fact_sigma_ip_[cluster_i][0], cross_cov_pred_ip.transpose(), chol_ip_cross_cov_ip_pred, false);
+					GPBoost::solve_lower_triangular(chol_fact_sigma_ip_[cluster_i][0],
+						cross_cov_pred_ip, chol_ip_cross_cov_ip_pred, GPU_use_);
 				}
 				vec_t resid_diag_pred;
 				if (calc_diag_resid_var_pred) {
@@ -10108,7 +10110,8 @@ namespace GPBoost {
 							Maux_rhs -= (*cross_cov).transpose() * resid_obs_inv_resid_pred_obs_t;
 						}
 						den_mat_t woodburry_part_sqrt;
-						TriangularSolveGivenCholesky<chol_den_mat_t, den_mat_t, den_mat_t, den_mat_t>(chol_fact_sigma_woodbury_[cluster_i], Maux_rhs, woodburry_part_sqrt, false);
+						//TriangularSolveGivenCholesky<chol_den_mat_t, den_mat_t, den_mat_t, den_mat_t>(chol_fact_sigma_woodbury_[cluster_i], Maux_rhs, woodburry_part_sqrt, false);
+						GPBoost::solve_lower_triangular(chol_fact_sigma_woodbury_[cluster_i], Maux_rhs, woodburry_part_sqrt, GPU_use_);
 						if (calc_pred_cov) {
 							T_mat Maux;
 							ConvertTo_T_mat_FromDense<T_mat>(woodburry_part_sqrt.transpose() * woodburry_part_sqrt, Maux);
@@ -10140,7 +10143,8 @@ namespace GPBoost {
 								SolveGivenCholesky<T_chol, T_mat, den_mat_t, den_mat_t>(chol_fact_resid_[cluster_i], (*cross_cov), resid_obs_inv_cross_cov);
 								den_mat_t Maux_rhs = cross_cov_pred_ip.transpose() - (sigma_resid_pred_obs * resid_obs_inv_cross_cov).transpose();
 								den_mat_t woodburry_part_sqrt;
-								TriangularSolveGivenCholesky<chol_den_mat_t, den_mat_t, den_mat_t, den_mat_t>(chol_fact_sigma_woodbury_[cluster_i], Maux_rhs, woodburry_part_sqrt, false);
+								//TriangularSolveGivenCholesky<chol_den_mat_t, den_mat_t, den_mat_t, den_mat_t>(chol_fact_sigma_woodbury_[cluster_i], Maux_rhs, woodburry_part_sqrt, false);
+								GPBoost::solve_lower_triangular(chol_fact_sigma_woodbury_[cluster_i], Maux_rhs, woodburry_part_sqrt, GPU_use_);
 								// Use stochastic estimate of sigma_resid_pred_obs * resid_obs_inv * sigma_resid_pred_obs.transpose()
 								cg_generator_ = RNG_t(seed_rand_vec_trace_);
 								den_mat_t rand_vecs(nsim_var_pred, num_REs_obs);
@@ -10224,7 +10228,8 @@ namespace GPBoost {
 								TriangularSolveGivenCholesky<T_chol, T_mat, T_mat, T_mat>(chol_fact_resid_[cluster_i], sigma_resid_pred_obs.transpose(), resid_obs_inv_sqrt_resid_pred_obs_t, false);
 								den_mat_t Maux_rhs = cross_cov_pred_ip.transpose() - resid_obs_inv_sqrt_cross_cov.transpose() * resid_obs_inv_sqrt_resid_pred_obs_t;
 								den_mat_t woodburry_part_sqrt;
-								TriangularSolveGivenCholesky<chol_den_mat_t, den_mat_t, den_mat_t, den_mat_t>(chol_fact_sigma_woodbury_[cluster_i], Maux_rhs, woodburry_part_sqrt, false);
+								//TriangularSolveGivenCholesky<chol_den_mat_t, den_mat_t, den_mat_t, den_mat_t>(chol_fact_sigma_woodbury_[cluster_i], Maux_rhs, woodburry_part_sqrt, false);
+								GPBoost::solve_lower_triangular(chol_fact_sigma_woodbury_[cluster_i], Maux_rhs, woodburry_part_sqrt, GPU_use_);
 								if (calc_pred_cov) {
 									T_mat Maux;
 									ConvertTo_T_mat_FromDense<T_mat>(woodburry_part_sqrt.transpose() * woodburry_part_sqrt, Maux);
@@ -10256,7 +10261,9 @@ namespace GPBoost {
 								}//end calc_pred_cov
 								if (calc_pred_var) {
 									den_mat_t sigma_resid_inv_cross_cov = chol_fact_resid_[cluster_i].solve((*cross_cov));// sigma_resid^-1 * cross_cov
-									den_mat_t sigma_ip_inv_cross_cov_pred_T = chol_fact_sigma_ip_[cluster_i][0].solve(cross_cov_pred_ip.transpose());// sigma_ip^-1 * cross_cov_pred^T
+									//den_mat_t sigma_ip_inv_cross_cov_pred_T = chol_fact_sigma_ip_[cluster_i][0].solve(cross_cov_pred_ip.transpose());// sigma_ip^-1 * cross_cov_pred^T
+									den_mat_t sigma_ip_inv_cross_cov_pred_T;
+									GPBoost::solve_linear_sys(chol_fact_sigma_ip_[cluster_i][0], cross_cov_pred_ip.transpose(), sigma_ip_inv_cross_cov_pred_T, GPU_use_);
 									den_mat_t auto_cross_cov = ((*cross_cov).transpose() * sigma_resid_inv_cross_cov) * sigma_ip_inv_cross_cov_pred_T;// cross_cov^T * sigma_resid^-1 * cross_cov * sigma_ip^-1 * cross_cov_pred
 									den_mat_t sigma_resid_pred_obs_sigma_resid_inv_cross_cov(num_REs_pred, (*cross_cov).cols());// Sigma_resid_pred * sigma_resid^-1 * cross_cov
 #pragma omp parallel for schedule(static)   
@@ -10276,7 +10283,8 @@ namespace GPBoost {
 									}
 									// Woodburry matrix part
 									den_mat_t Woodburry_fact_sigma_resid_inv_cross_cov;
-									TriangularSolveGivenCholesky<chol_den_mat_t, den_mat_t, den_mat_t, den_mat_t>(chol_fact_sigma_woodbury_[cluster_i], sigma_resid_inv_cross_cov.transpose(), Woodburry_fact_sigma_resid_inv_cross_cov, false);
+									//TriangularSolveGivenCholesky<chol_den_mat_t, den_mat_t, den_mat_t, den_mat_t>(chol_fact_sigma_woodbury_[cluster_i], sigma_resid_inv_cross_cov.transpose(), Woodburry_fact_sigma_resid_inv_cross_cov, false);
+									GPBoost::solve_lower_triangular(chol_fact_sigma_woodbury_[cluster_i], sigma_resid_inv_cross_cov, Woodburry_fact_sigma_resid_inv_cross_cov, GPU_use_);
 									den_mat_t auto_cross_cov_pred = (Woodburry_fact_sigma_resid_inv_cross_cov * (*cross_cov)) * sigma_ip_inv_cross_cov_pred_T;
 									den_mat_t sigma_resid_pred_obs_Woodburry_fact(num_REs_pred, (*cross_cov).cols());
 #pragma omp parallel for schedule(static)   
@@ -10447,7 +10455,9 @@ namespace GPBoost {
 								}
 
 								// sigma_ip^-1 * cross_cov_pred
-								den_mat_t sigma_ip_inv_cross_cov_pred_T = chol_fact_sigma_ip_[cluster_i][0].solve(cross_cov_pred_ip.transpose());
+								//den_mat_t sigma_ip_inv_cross_cov_pred_T = chol_fact_sigma_ip_[cluster_i][0].solve(cross_cov_pred_ip.transpose());
+								den_mat_t sigma_ip_inv_cross_cov_pred_T;
+								GPBoost::solve_linear_sys(chol_fact_sigma_ip_[cluster_i][0], cross_cov_pred_ip.transpose(), sigma_ip_inv_cross_cov_pred_T, GPU_use_);
 								// cross_cov^T * sigma^-1 * cross_cov
 								den_mat_t auto_cross_cov = (*cross_cov).transpose() * sigma_inv_cross_cov;
 								// cross_cov^T * sigma^-1 * cross_cov * sigma_ip^-1 * cross_cov_pred
