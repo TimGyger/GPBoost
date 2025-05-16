@@ -283,7 +283,7 @@ namespace GPBoost {
         // Solve: L * X = R -> X = L^{-1} * R
         // L is lower-triangular, column-major
         // Left-side, lower-triangular, no transpose, non-unit diagonal
-        cublasStatus_t stat = cublasDtrsm(
+        stat = cublasDtrsm(
             handle,
             CUBLAS_SIDE_LEFT,      // Solve L * X = R
             CUBLAS_FILL_MODE_LOWER,
