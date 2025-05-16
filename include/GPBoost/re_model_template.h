@@ -10055,7 +10055,7 @@ namespace GPBoost {
 				if (calc_pred_cov || calc_diag_resid_var_pred) {
 					//TriangularSolveGivenCholesky<chol_den_mat_t, den_mat_t, den_mat_t, den_mat_t>(chol_fact_sigma_ip_[cluster_i][0], cross_cov_pred_ip.transpose(), chol_ip_cross_cov_ip_pred, false);
 					GPBoost::solve_lower_triangular(chol_fact_sigma_ip_[cluster_i][0],
-						cross_cov_pred_ip, chol_ip_cross_cov_ip_pred, GPU_use_);
+						cross_cov_pred_ip.transpose(), chol_ip_cross_cov_ip_pred, GPU_use_);
 				}
 				vec_t resid_diag_pred;
 				if (calc_diag_resid_var_pred) {
@@ -10284,7 +10284,7 @@ namespace GPBoost {
 									// Woodburry matrix part
 									den_mat_t Woodburry_fact_sigma_resid_inv_cross_cov;
 									//TriangularSolveGivenCholesky<chol_den_mat_t, den_mat_t, den_mat_t, den_mat_t>(chol_fact_sigma_woodbury_[cluster_i], sigma_resid_inv_cross_cov.transpose(), Woodburry_fact_sigma_resid_inv_cross_cov, false);
-									GPBoost::solve_lower_triangular(chol_fact_sigma_woodbury_[cluster_i], sigma_resid_inv_cross_cov, Woodburry_fact_sigma_resid_inv_cross_cov, GPU_use_);
+									GPBoost::solve_lower_triangular(chol_fact_sigma_woodbury_[cluster_i], sigma_resid_inv_cross_cov.transpose(), Woodburry_fact_sigma_resid_inv_cross_cov, GPU_use_);
 									den_mat_t auto_cross_cov_pred = (Woodburry_fact_sigma_resid_inv_cross_cov * (*cross_cov)) * sigma_ip_inv_cross_cov_pred_T;
 									den_mat_t sigma_resid_pred_obs_Woodburry_fact(num_REs_pred, (*cross_cov).cols());
 #pragma omp parallel for schedule(static)   
