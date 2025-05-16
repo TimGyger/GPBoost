@@ -6650,8 +6650,17 @@ namespace GPBoost {
 						const den_mat_t* cross_cov = re_comps_cross_cov_[cluster_i][0][j]->GetSigmaPtr();
 						if (gp_approx_ == "fitc") {
 							den_mat_t sigma_ip_Ihalf_sigma_cross_covT = (*cross_cov).transpose();
-							TriangularSolveGivenCholesky<chol_den_mat_t, den_mat_t, den_mat_t, den_mat_t>(chol_fact_sigma_ip_[cluster_i][0],
-								sigma_ip_Ihalf_sigma_cross_covT, sigma_ip_Ihalf_sigma_cross_covT, false);
+							Log::REInfo("start");//only for debugging
+							std::chrono::steady_clock::time_point begin, end;//only for debugging
+							double el_time;//only for debugging
+							begin = std::chrono::steady_clock::now();//only for debugging
+							//TriangularSolveGivenCholesky<chol_den_mat_t, den_mat_t, den_mat_t, den_mat_t>(chol_fact_sigma_ip_[cluster_i][0],
+							//	sigma_ip_Ihalf_sigma_cross_covT, sigma_ip_Ihalf_sigma_cross_covT, false);
+							GPBoost::solve_lower_triangular(chol_fact_sigma_ip_[cluster_i][0], 
+								sigma_ip_Ihalf_sigma_cross_covT, sigma_ip_Ihalf_sigma_cross_covT);
+							end = std::chrono::steady_clock::now();//only for debugging
+							el_time = (double)(std::chrono::duration_cast<std::chrono::microseconds>(end - begin).count()) / 1000000.;//only for debugging
+							Log::REInfo("LS time until = %g ", el_time);
 							if (gauss_likelihood_) {
 								fitc_resid_diag_[cluster_i] = vec_t::Ones(re_comps_cross_cov_[cluster_i][0][0]->GetNumUniqueREs());//add nugget effect variance
 							}
@@ -6667,8 +6676,10 @@ namespace GPBoost {
 						else if (gp_approx_ == "full_scale_tapering" || gp_approx_ == "full_scale_vecchia") {
 							// Subtract predictive process covariance
 							chol_ip_cross_cov_[cluster_i][0] = (*cross_cov).transpose();
-							TriangularSolveGivenCholesky<chol_den_mat_t, den_mat_t, den_mat_t, den_mat_t>(chol_fact_sigma_ip_[cluster_i][0],
-								chol_ip_cross_cov_[cluster_i][0], chol_ip_cross_cov_[cluster_i][0], false);
+							//TriangularSolveGivenCholesky<chol_den_mat_t, den_mat_t, den_mat_t, den_mat_t>(chol_fact_sigma_ip_[cluster_i][0],
+							//	chol_ip_cross_cov_[cluster_i][0], chol_ip_cross_cov_[cluster_i][0], false);
+							GPBoost::solve_lower_triangular(chol_fact_sigma_ip_[cluster_i][0],
+								chol_ip_cross_cov_[cluster_i][0], chol_ip_cross_cov_[cluster_i][0]);
 							if (gp_approx_ == "full_scale_tapering") {
 								re_comps_resid_[cluster_i][0][j]->CalcSigma();
 								re_comps_resid_[cluster_i][0][j]->SubtractPredProcFromSigmaForResidInFullScale(chol_ip_cross_cov_[cluster_i][0], true);

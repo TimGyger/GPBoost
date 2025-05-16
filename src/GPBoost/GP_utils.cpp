@@ -8,6 +8,7 @@
 */
 #include <GPBoost/GP_utils.h>
 #include <GPBoost/utils.h>
+#include <GPBoost/sparse_matrix_utils.h>
 #include <cmath>
 
 #ifdef USE_CUDA_GP
@@ -419,6 +420,15 @@ namespace GPBoost {
 		C = D.asDiagonal() * B;
 	}
 
+	void solve_lower_triangular(const chol_den_mat_t& chol, const den_mat_t& R_host, den_mat_t& X_host, bool GPU_use) {
+		if (GPU_use) {
+			Log::REInfo("[Fallback] Not able to compile CUDA Code. Continuing with CPU support.");
+			GPU_use = false;
+		}
+		TriangularSolveGivenCholesky<chol_den_mat_t, den_mat_t, den_mat_t, den_mat_t>(chol,
+			R_host, X_host, false);
+	}
+
 	// Cholesky Factor
 	/*void cholesky_solver(chol_den_mat_t& llt, const den_mat_t& A_input, bool GPU_use) {
 		if (GPU_use) {
@@ -504,6 +514,32 @@ namespace GPBoost {
 			for (int i = 0; i < B.cols(); ++i) {
 				C.col(i) = A * B.col(i);
 			}
+		}
+	}
+
+	bool try_solve_lower_triangular_gpu(const chol_den_mat_t& chol, const den_mat_t& R_host, den_mat_t& X_host);
+
+	void solve_lower_triangular(const chol_den_mat_t& chol, const den_mat_t& R_host, den_mat_t& X_host, bool GPU_use) {
+		if (!GPU_use) {
+			Log::REInfo("[Fallback] Forced Eigen matrix-multiplication.");
+			TriangularSolveGivenCholesky<chol_den_mat_t, den_mat_t, den_mat_t, den_mat_t>(chol,
+				R_host, X_host, false);
+			return;
+		}
+		int device_count = 0;
+		cudaError_t err = cudaGetDeviceCount(&device_count);
+		if (err != cudaSuccess || device_count == 0) {
+			Log::REInfo("[Fallback] No CUDA devices found. Using Eigen for matrix-multiplication.");
+			TriangularSolveGivenCholesky<chol_den_mat_t, den_mat_t, den_mat_t, den_mat_t>(chol,
+				R_host, X_host, false);
+			GPU_use = false;
+			return;
+		}
+
+		if (!try_solve_lower_triangular_gpu(chol, R_host, X_host)) {
+			Log::REInfo("[Fallback] Error in computation on GPU. Using Eigen for matrix-multiplication.");
+			TriangularSolveGivenCholesky<chol_den_mat_t, den_mat_t, den_mat_t, den_mat_t>(chol,
+				R_host, X_host, false);
 		}
 	}
 

@@ -253,6 +253,66 @@ namespace GPBoost {
         return true;
     }
 
+    bool solve_lower_triangular_gpu(const chol_den_mat_t& chol, const den_mat_t& R_host, den_mat_t& X_host) {
+        den_mat_t L_host = chol.matrixL();
+        int n = L_host.rows();
+        int m = R_host.cols();
+        if (L_host.cols() != n || R_host.rows() != n) {
+            return false;
+        }
+
+        X_host = R_host; // output matrix
+
+        // Allocate device memory
+        double* d_L = nullptr;
+        double* d_X = nullptr;
+
+        cudaMalloc(&d_L, n * n * sizeof(double));
+        cudaMalloc(&d_X, n * m * sizeof(double));
+
+        cudaMemcpy(d_L, L_host.data(), n * n * sizeof(double), cudaMemcpyHostToDevice);
+        cudaMemcpy(d_X, X_host.data(), n * m * sizeof(double), cudaMemcpyHostToDevice);
+
+        // Create cuBLAS handle
+        cublasHandle_t handle;
+        cublasCreate(&handle);
+
+        const double alpha = 1.0;
+
+        // Solve: L * X = R -> X = L^{-1} * R
+        // L is lower-triangular, column-major
+        // Left-side, lower-triangular, no transpose, non-unit diagonal
+        cublasStatus_t stat = cublasDtrsm(
+            handle,
+            CUBLAS_SIDE_LEFT,      // Solve L * X = R
+            CUBLAS_FILL_MODE_LOWER,
+            CUBLAS_OP_N,           // No transpose
+            CUBLAS_DIAG_NON_UNIT,  // Assume general diagonal
+            n,                     // number of rows of L and X
+            m,                     // number of columns of X
+            &alpha,                // Scalar alpha
+            d_L, n,                // L, leading dimension n
+            d_X, n                 // R becomes X, leading dimension n
+        );
+
+        if (stat != CUBLAS_STATUS_SUCCESS) {
+            cudaFree(d_L); cudaFree(d_X);
+            cublasDestroy(handle);
+            return false;
+        }
+
+        // Copy result back
+        cudaMemcpy(X_host.data(), d_X, n * m * sizeof(double), cudaMemcpyDeviceToHost);
+
+        // Cleanup
+        cudaFree(d_L);
+        cudaFree(d_X);
+        cublasDestroy(handle);
+
+        Log::REInfo("[GPU] Triangular solve with CUBLAS.");
+        return true;
+    }
+
     /*bool cholesky_cusolver_to_eigen(chol_den_mat_t& llt, const den_mat_t& A_input) {
         int N = A_input.rows();
         if (A_input.cols() != N) return false;

@@ -577,6 +577,15 @@ namespace GPBoost {
 	void sparse_dense_matmul(const sp_mat_rm_t& A, const den_mat_t& B, den_mat_t& C, bool GPU_use);
 
 	/*!
+	* \brief Linear solve L^{-1} * R = X for given Cholesky factor L 
+	* \param chol Cholesky factor L
+	* \param R_host Right-hand side
+	* \param[out] X = L^{-1} * R
+	* \param GPU_use if false Use CPU
+	*/
+	void solve_lower_triangular(const chol_den_mat_t& chol, const den_mat_t& R_host, den_mat_t& X_host, bool GPU_use);
+
+	/*!
 	* \brief Cholesky factor of A_input = LL^T
 	* \param[out] llt Cholesky factor L
 	* \param A_input Matrix
