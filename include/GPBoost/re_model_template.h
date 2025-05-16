@@ -9991,8 +9991,8 @@ namespace GPBoost {
 								{
 									if (!has_fitc_correction) {
 										has_fitc_correction = true;
-										sigma_ip_inv_cross_cov_T = chol_fact_sigma_ip_[cluster_i][0].solve((*cross_cov).transpose());
-										//GPBoost::solve_linear_sys(chol_fact_sigma_ip_[cluster_i][0], (*cross_cov).transpose(), sigma_ip_inv_cross_cov_T, GPU_use_);
+										//sigma_ip_inv_cross_cov_T = chol_fact_sigma_ip_[cluster_i][0].solve((*cross_cov).transpose());
+										GPBoost::solve_linear_sys(chol_fact_sigma_ip_[cluster_i][0], (*cross_cov).transpose(), sigma_ip_inv_cross_cov_T, GPU_use_);
 									}
 								}
 								double fitc_corr_ij = sigma2 - (cross_cov_pred_ip.row(ii)).dot(sigma_ip_inv_cross_cov_T.col(jj));
@@ -10053,9 +10053,9 @@ namespace GPBoost {
 				bool calc_diag_resid_var_pred = (gp_approx_ == "fitc") ||
 					(gauss_likelihood_ && gp_approx_ == "full_scale_tapering" && calc_pred_var && matrix_inversion_method_ != "iterative" && calc_pred_cov_var_FSA_cholesky_ != "exact");
 				if (calc_pred_cov || calc_diag_resid_var_pred) {
-					TriangularSolveGivenCholesky<chol_den_mat_t, den_mat_t, den_mat_t, den_mat_t>(chol_fact_sigma_ip_[cluster_i][0], cross_cov_pred_ip.transpose(), chol_ip_cross_cov_ip_pred, false);
-					//GPBoost::solve_lower_triangular(chol_fact_sigma_ip_[cluster_i][0],
-						//cross_cov_pred_ip.transpose(), chol_ip_cross_cov_ip_pred, GPU_use_);
+					//TriangularSolveGivenCholesky<chol_den_mat_t, den_mat_t, den_mat_t, den_mat_t>(chol_fact_sigma_ip_[cluster_i][0], cross_cov_pred_ip.transpose(), chol_ip_cross_cov_ip_pred, false);
+					GPBoost::solve_lower_triangular(chol_fact_sigma_ip_[cluster_i][0],
+						cross_cov_pred_ip.transpose(), chol_ip_cross_cov_ip_pred, GPU_use_);
 				}
 				vec_t resid_diag_pred;
 				if (calc_diag_resid_var_pred) {
@@ -10111,7 +10111,7 @@ namespace GPBoost {
 						}
 						den_mat_t woodburry_part_sqrt;
 						TriangularSolveGivenCholesky<chol_den_mat_t, den_mat_t, den_mat_t, den_mat_t>(chol_fact_sigma_woodbury_[cluster_i], Maux_rhs, woodburry_part_sqrt, false);
-						//GPBoost::solve_lower_triangular(chol_fact_sigma_woodbury_[cluster_i], Maux_rhs, woodburry_part_sqrt, GPU_use_);
+						//GPBoost::solve_lower_triangular(chol_fact_sigma_woodbury_[cluster_i], (den_mat_t)Maux_rhs, woodburry_part_sqrt, GPU_use_);
 						if (calc_pred_cov) {
 							T_mat Maux;
 							ConvertTo_T_mat_FromDense<T_mat>(woodburry_part_sqrt.transpose() * woodburry_part_sqrt, Maux);
