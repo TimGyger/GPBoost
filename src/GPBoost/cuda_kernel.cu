@@ -261,8 +261,6 @@ namespace GPBoost {
             return false;
         }
 
-        X_host = R_host; // output matrix
-
         // Allocate device memory
         double* d_L = nullptr;
         double* d_X = nullptr;
@@ -271,7 +269,7 @@ namespace GPBoost {
         cudaMalloc(&d_X, n * m * sizeof(double));
 
         cudaMemcpy(d_L, L_host.data(), n * n * sizeof(double), cudaMemcpyHostToDevice);
-        cudaMemcpy(d_X, X_host.data(), n * m * sizeof(double), cudaMemcpyHostToDevice);
+        cudaMemcpy(d_X, R_host.data(), n * m * sizeof(double), cudaMemcpyHostToDevice);
 
         // Create cuBLAS handle
         cublasHandle_t handle;
@@ -310,6 +308,87 @@ namespace GPBoost {
         cublasDestroy(handle);
 
         Log::REInfo("[GPU] Triangular solve with CUBLAS.");
+        return true;
+    }
+
+    bool try_solve_cholesky_gpu(const chol_den_mat_t& chol, const den_mat_t& R_host, den_mat_t& X_host) {
+        den_mat_t L_host = chol.matrixL();  // L from LL^T
+        int n = L_host.rows();
+        int m = R_host.cols();
+
+        if (L_host.cols() != n || R_host.rows() != n) {
+            return false;
+        }
+
+        // Allocate memory
+        double* d_L = nullptr;
+        double* d_Y = nullptr;
+        double* d_X = nullptr;
+
+        cudaMalloc(&d_L, n * n * sizeof(double));
+        cudaMalloc(&d_Y, n * m * sizeof(double));
+        cudaMalloc(&d_X, n * m * sizeof(double));
+
+        cudaMemcpy(d_L, L_host.data(), n * n * sizeof(double), cudaMemcpyHostToDevice);
+        cudaMemcpy(d_Y, R_host.data(), n * m * sizeof(double), cudaMemcpyHostToDevice);  // Start Y = R
+
+        // Create cuBLAS handle
+        cublasHandle_t handle;
+        cublasCreate(&handle);
+
+        const double alpha = 1.0;
+
+        // Step 1: Solve L * Y = R
+        cublasStatus_t stat1 = cublasDtrsm(
+            handle,
+            CUBLAS_SIDE_LEFT,
+            CUBLAS_FILL_MODE_LOWER,
+            CUBLAS_OP_N,
+            CUBLAS_DIAG_NON_UNIT,
+            n, m,
+            &alpha,
+            d_L, n,
+            d_Y, n  // In-place
+        );
+
+        if (stat1 != CUBLAS_STATUS_SUCCESS) {
+            cudaFree(d_L); cudaFree(d_Y); cudaFree(d_X);
+            cublasDestroy(handle);
+            return false;
+        }
+
+        // Step 2: Solve L^T * X = Y
+        cudaMemcpy(d_X, d_Y, n * m * sizeof(double), cudaMemcpyDeviceToDevice);  // Copy Y into X
+
+        cublasStatus_t stat2 = cublasDtrsm(
+            handle,
+            CUBLAS_SIDE_LEFT,
+            CUBLAS_FILL_MODE_LOWER,
+            CUBLAS_OP_T,  // Transpose
+            CUBLAS_DIAG_NON_UNIT,
+            n, m,
+            &alpha,
+            d_L, n,
+            d_X, n  // In-place
+        );
+
+        if (stat2 != CUBLAS_STATUS_SUCCESS) {
+            cudaFree(d_L); cudaFree(d_Y); cudaFree(d_X);
+            cublasDestroy(handle);
+            return false;
+        }
+
+        // Copy result back
+        X_host.resize(n, m);
+        cudaMemcpy(X_host.data(), d_X, n * m * sizeof(double), cudaMemcpyDeviceToHost);
+
+        // Cleanup
+        cudaFree(d_L);
+        cudaFree(d_Y);
+        cudaFree(d_X);
+        cublasDestroy(handle);
+
+        Log::REInfo("[GPU] Full Cholesky solve (Sigma^-1 * R) with cuBLAS.");
         return true;
     }
 

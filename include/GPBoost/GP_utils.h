@@ -586,6 +586,15 @@ namespace GPBoost {
 	void solve_lower_triangular(const chol_den_mat_t& chol, const den_mat_t& R_host, den_mat_t& X_host, bool GPU_use);
 
 	/*!
+	* \brief Solves Sigma^{-1} * R = X for given Cholesky factor L of Sigma
+	* \param chol Cholesky factor L
+	* \param R_host Right-hand side
+	* \param[out] X = Sigma^{-1} * R
+	* \param GPU_use if false Use CPU
+	*/
+	void solve_linear_sys(const chol_den_mat_t& chol, const den_mat_t& R_host, den_mat_t& X_host, bool GPU_use);
+
+	/*!
 	* \brief Cholesky factor of A_input = LL^T
 	* \param[out] llt Cholesky factor L
 	* \param A_input Matrix

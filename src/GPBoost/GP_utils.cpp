@@ -429,6 +429,14 @@ namespace GPBoost {
 			R_host, X_host, false);
 	}
 
+	void solve_linear_sys(const chol_den_mat_t& chol, const den_mat_t& R_host, den_mat_t& X_host, bool GPU_use) {
+		if (GPU_use) {
+			Log::REInfo("[Fallback] Not able to compile CUDA Code. Continuing with CPU support.");
+			GPU_use = false;
+		}
+		X_host = chol.solve(R_host);
+	}
+
 	// Cholesky Factor
 	/*void cholesky_solver(chol_den_mat_t& llt, const den_mat_t& A_input, bool GPU_use) {
 		if (GPU_use) {
@@ -540,6 +548,29 @@ namespace GPBoost {
 			Log::REInfo("[Fallback] Error in computation on GPU. Using Eigen for matrix-multiplication.");
 			TriangularSolveGivenCholesky<chol_den_mat_t, den_mat_t, den_mat_t, den_mat_t>(chol,
 				R_host, X_host, false);
+		}
+	}
+
+	bool try_solve_cholesky_gpu(const chol_den_mat_t& chol, const den_mat_t& R_host, den_mat_t& X_host);
+
+	void solve_linear_sys(const chol_den_mat_t& chol, const den_mat_t& R_host, den_mat_t& X_host, bool GPU_use) {
+		if (!GPU_use) {
+			Log::REInfo("[Fallback] Forced Eigen matrix-multiplication.");
+			X_host = chol.solve(R_host);
+			return;
+		}
+		int device_count = 0;
+		cudaError_t err = cudaGetDeviceCount(&device_count);
+		if (err != cudaSuccess || device_count == 0) {
+			Log::REInfo("[Fallback] No CUDA devices found. Using Eigen for matrix-multiplication.");
+			X_host = chol.solve(R_host);
+			GPU_use = false;
+			return;
+		}
+
+		if (!try_solve_cholesky_gpu(chol, R_host, X_host)) {
+			Log::REInfo("[Fallback] Error in computation on GPU. Using Eigen for matrix-multiplication.");
+			X_host = chol.solve(R_host);
 		}
 	}
 

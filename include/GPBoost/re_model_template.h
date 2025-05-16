@@ -1682,6 +1682,10 @@ namespace GPBoost {
 			bool include_error_var,
 			int first_cov_par,
 			data_size_t cluster_i) {
+			Log::REInfo("CalcGradPars_FITC_FSA_GaussLikelihood_Cluster_i");//only for debugging
+			std::chrono::steady_clock::time_point begin, end;//only for debugging
+			double el_time;//only for debugging
+			begin = std::chrono::steady_clock::now();//only for debugging
 			CHECK(gp_approx_ == "fitc" || gp_approx_ == "full_scale_tapering" || gp_approx_ == "full_scale_vecchia");
 			CHECK(gauss_likelihood_);
 			if (include_error_var) {
@@ -1873,7 +1877,9 @@ namespace GPBoost {
 						// Derivative of diagonal part
 						vec_t FITC_Diag_grad = vec_t::Zero(num_data_per_cluster_[cluster_i]);
 						FITC_Diag_grad.array() += sigma_ip_stable_grad.coeffRef(0, 0);
-						den_mat_t sigma_ip_inv_sigma_cross_cov = chol_fact_sigma_ip_[cluster_i][0].solve((*cross_cov).transpose());
+						//den_mat_t sigma_ip_inv_sigma_cross_cov = chol_fact_sigma_ip_[cluster_i][0].solve((*cross_cov).transpose());
+						den_mat_t sigma_ip_inv_sigma_cross_cov;
+						GPBoost::solve_linear_sys(chol_fact_sigma_ip_[cluster_i][0], (*cross_cov).transpose(), sigma_ip_inv_sigma_cross_cov, GPU_use_);
 						den_mat_t sigma_ip_grad_inv_sigma_cross_cov = sigma_ip_stable_grad * sigma_ip_inv_sigma_cross_cov;
 #pragma omp parallel for schedule(static)
 						for (int ii = 0; ii < num_data_per_cluster_[cluster_i]; ++ii) {
@@ -1906,6 +1912,9 @@ namespace GPBoost {
 					}
 				}//end loop over ipar
 			}//end loop over comps	
+			end = std::chrono::steady_clock::now();//only for debugging
+			el_time = (double)(std::chrono::duration_cast<std::chrono::microseconds>(end - begin).count()) / 1000000.;//only for debugging
+			Log::REInfo("CalcGradPars_FITC_FSA_GaussLikelihood_Cluster_i time until = %g ", el_time);
 		}//end CalcGradPars_FITC_FSA_GaussLikelihood_Cluster_i
 
 		/*!
@@ -6393,6 +6402,9 @@ namespace GPBoost {
 					Log::REFatal("Cannot have more inducing points than unique coordinates for '%s' approximation ", gp_approx_.c_str());
 				}
 			}
+			end = std::chrono::steady_clock::now();//only for debugging
+			el_time = (double)(std::chrono::duration_cast<std::chrono::microseconds>(end - begin).count()) / 1000000.;//only for debugging
+			Log::REInfo("CreateREComponentsFITC_FSA 1 time until = %g ", el_time);
 			std::vector<int> indices;
 			den_mat_t gp_coords_ip_mat;
 			if (ind_points_selection_ == "cover_tree") {
@@ -6448,6 +6460,9 @@ namespace GPBoost {
 					num_ind_points_ = num_ind_points;
 				}
 			}
+			end = std::chrono::steady_clock::now();//only for debugging
+			el_time = (double)(std::chrono::duration_cast<std::chrono::microseconds>(end - begin).count()) / 1000000.;//only for debugging
+			Log::REInfo("CreateREComponentsFITC_FSA 2 time until = %g ", el_time);
 			gp_coords_ip_mat_ = gp_coords_ip_mat;
 			gp_coords_all_unique.resize(0, 0);
 			std::shared_ptr<RECompGP<den_mat_t>> gp_ip(new RECompGP<den_mat_t>(
