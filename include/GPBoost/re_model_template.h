@@ -1739,7 +1739,12 @@ namespace GPBoost {
 					den_mat_t sigma_ip_stable_grad = *(re_comps_ip_[cluster_i][0][j]->GetZSigmaZtGrad(ipar, true, 0.));
 					// Trace of sigma_ip^-1 * sigma_ip_grad
 					if (matrix_inversion_method_ == "cholesky") {
-						den_mat_t sigma_ip_inv_sigma_ip_stable_grad = chol_fact_sigma_ip_[cluster_i][0].solve(sigma_ip_stable_grad);
+						//den_mat_t sigma_ip_inv_sigma_ip_stable_grad = chol_fact_sigma_ip_[cluster_i][0].solve(sigma_ip_stable_grad);
+						den_mat_t sigma_ip_inv_sigma_ip_stable_grad;
+						GPBoost::solve_linear_sys(chol_fact_sigma_ip_[cluster_i][0], sigma_ip_stable_grad, sigma_ip_inv_sigma_ip_stable_grad, GPU_use_);
+						end = std::chrono::steady_clock::now();//only for debugging
+						el_time = (double)(std::chrono::duration_cast<std::chrono::microseconds>(end - begin).count()) / 1000000.;//only for debugging
+						Log::REInfo("CalcGradPars_FITC_FSA_GaussLikelihood_Cluster_i 0 time until = %g ", el_time);
 						grad_cov_aux_par[first_cov_par + ind_par_[j] - 1 + ipar] -= 0.5 * sigma_ip_inv_sigma_ip_stable_grad.trace();
 					}
 					grad_cov_aux_par[first_cov_par + ind_par_[j] - 1 + ipar] += ((0.5 * sigma_ip_inv_cross_cov_y_aux.dot((sigma_ip_stable_grad)*sigma_ip_inv_cross_cov_y_aux)
@@ -1882,7 +1887,7 @@ namespace GPBoost {
 						GPBoost::solve_linear_sys(chol_fact_sigma_ip_[cluster_i][0], (*cross_cov).transpose(), sigma_ip_inv_sigma_cross_cov, GPU_use_);
 						end = std::chrono::steady_clock::now();//only for debugging
 						el_time = (double)(std::chrono::duration_cast<std::chrono::microseconds>(end - begin).count()) / 1000000.;//only for debugging
-						Log::REInfo("CalcGradPars_FITC_FSA_GaussLikelihood_Cluster_i 2 time until = %g ", el_time);
+						Log::REInfo("CalcGradPars_FITC_FSA_GaussLikelihood_Cluster_i 1 time until = %g ", el_time);
 						//den_mat_t sigma_ip_grad_inv_sigma_cross_cov = sigma_ip_stable_grad * sigma_ip_inv_sigma_cross_cov;
 						den_mat_t sigma_ip_grad_inv_sigma_cross_cov;
 						GPBoost::matmul(sigma_ip_stable_grad, sigma_ip_inv_sigma_cross_cov, sigma_ip_grad_inv_sigma_cross_cov, GPU_use_);
