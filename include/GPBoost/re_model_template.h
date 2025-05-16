@@ -6657,7 +6657,7 @@ namespace GPBoost {
 							//TriangularSolveGivenCholesky<chol_den_mat_t, den_mat_t, den_mat_t, den_mat_t>(chol_fact_sigma_ip_[cluster_i][0],
 							//	sigma_ip_Ihalf_sigma_cross_covT, sigma_ip_Ihalf_sigma_cross_covT, false);
 							GPBoost::solve_lower_triangular(chol_fact_sigma_ip_[cluster_i][0], 
-								sigma_ip_Ihalf_sigma_cross_covT, sigma_ip_Ihalf_sigma_cross_covT);
+								sigma_ip_Ihalf_sigma_cross_covT, sigma_ip_Ihalf_sigma_cross_covT, GPU_use_);
 							end = std::chrono::steady_clock::now();//only for debugging
 							el_time = (double)(std::chrono::duration_cast<std::chrono::microseconds>(end - begin).count()) / 1000000.;//only for debugging
 							Log::REInfo("LS time until = %g ", el_time);
@@ -6679,7 +6679,7 @@ namespace GPBoost {
 							//TriangularSolveGivenCholesky<chol_den_mat_t, den_mat_t, den_mat_t, den_mat_t>(chol_fact_sigma_ip_[cluster_i][0],
 							//	chol_ip_cross_cov_[cluster_i][0], chol_ip_cross_cov_[cluster_i][0], false);
 							GPBoost::solve_lower_triangular(chol_fact_sigma_ip_[cluster_i][0],
-								chol_ip_cross_cov_[cluster_i][0], chol_ip_cross_cov_[cluster_i][0]);
+								chol_ip_cross_cov_[cluster_i][0], chol_ip_cross_cov_[cluster_i][0], GPU_use_);
 							if (gp_approx_ == "full_scale_tapering") {
 								re_comps_resid_[cluster_i][0][j]->CalcSigma();
 								re_comps_resid_[cluster_i][0][j]->SubtractPredProcFromSigmaForResidInFullScale(chol_ip_cross_cov_[cluster_i][0], true);

@@ -253,7 +253,7 @@ namespace GPBoost {
         return true;
     }
 
-    bool solve_lower_triangular_gpu(const chol_den_mat_t& chol, const den_mat_t& R_host, den_mat_t& X_host) {
+    bool try_solve_lower_triangular_gpu(const chol_den_mat_t& chol, const den_mat_t& R_host, den_mat_t& X_host) {
         den_mat_t L_host = chol.matrixL();
         int n = L_host.rows();
         int m = R_host.cols();
