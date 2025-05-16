@@ -1880,12 +1880,22 @@ namespace GPBoost {
 						//den_mat_t sigma_ip_inv_sigma_cross_cov = chol_fact_sigma_ip_[cluster_i][0].solve((*cross_cov).transpose());
 						den_mat_t sigma_ip_inv_sigma_cross_cov;
 						GPBoost::solve_linear_sys(chol_fact_sigma_ip_[cluster_i][0], (*cross_cov).transpose(), sigma_ip_inv_sigma_cross_cov, GPU_use_);
-						den_mat_t sigma_ip_grad_inv_sigma_cross_cov = sigma_ip_stable_grad * sigma_ip_inv_sigma_cross_cov;
+						el_time = (double)(std::chrono::duration_cast<std::chrono::microseconds>(end - begin).count()) / 1000000.;//only for debugging
+						Log::REInfo("CalcGradPars_FITC_FSA_GaussLikelihood_Cluster_i 2 time until = %g ", el_time);
+						//den_mat_t sigma_ip_grad_inv_sigma_cross_cov = sigma_ip_stable_grad * sigma_ip_inv_sigma_cross_cov;
+						den_mat_t sigma_ip_grad_inv_sigma_cross_cov;
+						GPBoost::matmul(sigma_ip_stable_grad, sigma_ip_inv_sigma_cross_cov, sigma_ip_grad_inv_sigma_cross_cov, GPU_use_);
+						end = std::chrono::steady_clock::now();//only for debugging
+						el_time = (double)(std::chrono::duration_cast<std::chrono::microseconds>(end - begin).count()) / 1000000.;//only for debugging
+						Log::REInfo("CalcGradPars_FITC_FSA_GaussLikelihood_Cluster_i 2 time until = %g ", el_time);
 #pragma omp parallel for schedule(static)
 						for (int ii = 0; ii < num_data_per_cluster_[cluster_i]; ++ii) {
 							FITC_Diag_grad[ii] -= 2 * sigma_ip_inv_sigma_cross_cov.col(ii).dot((*cross_cov_grad).transpose().col(ii))
 								- sigma_ip_inv_sigma_cross_cov.col(ii).dot(sigma_ip_grad_inv_sigma_cross_cov.col(ii));
 						}
+						end = std::chrono::steady_clock::now();//only for debugging
+						el_time = (double)(std::chrono::duration_cast<std::chrono::microseconds>(end - begin).count()) / 1000000.;//only for debugging
+						Log::REInfo("CalcGradPars_FITC_FSA_GaussLikelihood_Cluster_i 3 time until = %g ", el_time);
 						sigma_ip_inv_sigma_cross_cov.resize(0, 0);
 						sigma_ip_grad_inv_sigma_cross_cov.resize(0, 0);
 						grad_cov_aux_par[first_cov_par + ind_par_[j] - 1 + ipar] -= 0.5 * y_aux_[cluster_i].dot(FITC_Diag_grad.asDiagonal() * y_aux_[cluster_i]) / cov_pars[0];
