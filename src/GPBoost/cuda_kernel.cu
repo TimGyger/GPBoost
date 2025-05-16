@@ -273,8 +273,11 @@ namespace GPBoost {
 
         // Create cuBLAS handle
         cublasHandle_t handle;
-        cublasCreate(&handle);
-
+        cublasStatus_t stat = cublasCreate(&handle);
+        if (stat != CUBLAS_STATUS_SUCCESS) {
+            cudaFree(d_L); cudaFree(d_X);
+            return false;
+        }
         const double alpha = 1.0;
 
         // Solve: L * X = R -> X = L^{-1} * R
