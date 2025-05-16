@@ -9991,8 +9991,8 @@ namespace GPBoost {
 								{
 									if (!has_fitc_correction) {
 										has_fitc_correction = true;
-										//sigma_ip_inv_cross_cov_T = chol_fact_sigma_ip_[cluster_i][0].solve((*cross_cov).transpose());
-										GPBoost::solve_linear_sys(chol_fact_sigma_ip_[cluster_i][0], (*cross_cov).transpose(), sigma_ip_inv_cross_cov_T, GPU_use_);
+										sigma_ip_inv_cross_cov_T = chol_fact_sigma_ip_[cluster_i][0].solve((*cross_cov).transpose());
+										//GPBoost::solve_linear_sys(chol_fact_sigma_ip_[cluster_i][0], (*cross_cov).transpose(), sigma_ip_inv_cross_cov_T, GPU_use_);
 									}
 								}
 								double fitc_corr_ij = sigma2 - (cross_cov_pred_ip.row(ii)).dot(sigma_ip_inv_cross_cov_T.col(jj));
