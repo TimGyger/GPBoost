@@ -10053,9 +10053,9 @@ namespace GPBoost {
 				bool calc_diag_resid_var_pred = (gp_approx_ == "fitc") ||
 					(gauss_likelihood_ && gp_approx_ == "full_scale_tapering" && calc_pred_var && matrix_inversion_method_ != "iterative" && calc_pred_cov_var_FSA_cholesky_ != "exact");
 				if (calc_pred_cov || calc_diag_resid_var_pred) {
-					//TriangularSolveGivenCholesky<chol_den_mat_t, den_mat_t, den_mat_t, den_mat_t>(chol_fact_sigma_ip_[cluster_i][0], cross_cov_pred_ip.transpose(), chol_ip_cross_cov_ip_pred, false);
-					GPBoost::solve_lower_triangular(chol_fact_sigma_ip_[cluster_i][0],
-						cross_cov_pred_ip.transpose(), chol_ip_cross_cov_ip_pred, GPU_use_);
+					TriangularSolveGivenCholesky<chol_den_mat_t, den_mat_t, den_mat_t, den_mat_t>(chol_fact_sigma_ip_[cluster_i][0], cross_cov_pred_ip.transpose(), chol_ip_cross_cov_ip_pred, false);
+					//GPBoost::solve_lower_triangular(chol_fact_sigma_ip_[cluster_i][0],
+						//cross_cov_pred_ip.transpose(), chol_ip_cross_cov_ip_pred, GPU_use_);
 				}
 				vec_t resid_diag_pred;
 				if (calc_diag_resid_var_pred) {
