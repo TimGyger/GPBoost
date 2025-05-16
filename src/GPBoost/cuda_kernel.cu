@@ -260,7 +260,7 @@ namespace GPBoost {
         if (L_host.cols() != n || R_host.rows() != n) {
             return false;
         }
-        C.resize(n, m);
+        X_host.resize(n, m);
         // Allocate device memory
         double* d_L = nullptr;
         double* d_X = nullptr;
@@ -322,7 +322,7 @@ namespace GPBoost {
         if (L_host.cols() != n || R_host.rows() != n) {
             return false;
         }
-        C.resize(n, m);
+        X_host.resize(n, m);
         // Allocate memory
         double* d_L = nullptr;
         double* d_Y = nullptr;
