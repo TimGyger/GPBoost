@@ -395,7 +395,7 @@ namespace GPBoost {
         return true;
     }
 
-    /*bool cholesky_cusolver_to_eigen(chol_den_mat_t& llt, const den_mat_t& A_input) {
+    bool cholesky_cusolver_to_eigen(chol_den_mat_t& llt, const den_mat_t& A_input) {
         int N = A_input.rows();
         if (A_input.cols() != N) return false;
 
@@ -439,7 +439,7 @@ namespace GPBoost {
         cusolverDnDestroy(handle);
 
         return true;
-    }*/
+    }
 
 }  // namespace GPBoost
 

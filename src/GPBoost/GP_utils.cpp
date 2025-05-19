@@ -15,7 +15,7 @@
 #include <cuda_runtime.h>
 #include <cublas_v2.h>
 #include <cusparse.h>
-//#include <cusolverDn.h>
+#include <cusolverDn.h>
 #endif
 
 
@@ -438,13 +438,13 @@ namespace GPBoost {
 	}
 
 	// Cholesky Factor
-	/*void cholesky_solver(chol_den_mat_t& llt, const den_mat_t& A_input, bool GPU_use) {
+	void cholesky_solver(chol_den_mat_t& llt, const den_mat_t& A_input, bool GPU_use) {
 		if (GPU_use) {
 			Log::REInfo("[Fallback] Not able to compile CUDA Code. Continuing with CPU support.");
 			GPU_use = false;
 		}
 		llt.compute(A_input);
-	}*/
+	}
 #else
 	// Matrix multiplication
 	bool try_matmul_gpu(const den_mat_t& A, const den_mat_t& B, den_mat_t& C);
@@ -575,7 +575,7 @@ namespace GPBoost {
 	}
 
 	// Cholesky Factor
-	/*bool cholesky_cusolver_to_eigen(chol_den_mat_t& llt, const den_mat_t& A_input);
+	bool cholesky_cusolver_to_eigen(chol_den_mat_t& llt, const den_mat_t& A_input);
 
 	void cholesky_solver(chol_den_mat_t& llt, const den_mat_t& A_input, bool GPU_use) {
 		if (!GPU_use) {
@@ -596,7 +596,7 @@ namespace GPBoost {
 			Log::REInfo("[Fallback] Error in computation on GPU. Using Eigen for Cholesky factorization.");
 			llt.compute(A_input);
 		}
-	}*/
+	}
 #endif
 
 }  // namespace GPBoost
