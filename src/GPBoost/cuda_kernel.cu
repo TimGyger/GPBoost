@@ -438,6 +438,7 @@ namespace GPBoost {
         cudaFree(d_A); cudaFree(work); cudaFree(dev_info);
         cusolverDnDestroy(handle);
 
+        Log::REInfo("[GPU] Cholesky Factorization with cuSOLVE.");
         return true;
     }
 

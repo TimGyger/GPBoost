@@ -592,7 +592,7 @@ namespace GPBoost {
 			return;
 		}
 
-		if (!try_matmul_gpu(A, B, C)) {
+		if (!cholesky_cusolver_to_eigen(llt, A_input)) {
 			Log::REInfo("[Fallback] Error in computation on GPU. Using Eigen for Cholesky factorization.");
 			llt.compute(A_input);
 		}
