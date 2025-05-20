@@ -8130,9 +8130,9 @@ namespace GPBoost {
 						B_cross_cov_[cluster_i][0].resize(num_data_per_cluster_[cluster_i], num_ind_points_);
 						B_T_D_inv_B_cross_cov_[cluster_i][0].resize(num_data_per_cluster_[cluster_i], num_ind_points_);
 
-						GPBoost::sparse_dense_matmul(B_rm_[cluster_i][0], (*cross_cov), B_cross_cov_[cluster_i][0], GP_use_);
-						GPBoost::sparse_dense_matmul(D_inv_rm_[cluster_i][0], B_cross_cov_[cluster_i][0], D_inv_B_cross_cov_[cluster_i][0], GP_use_);
-						GPBoost::sparse_dense_matmul(B_t_D_inv_rm_[cluster_i][0], B_cross_cov_[cluster_i][0], B_T_D_inv_B_cross_cov_[cluster_i][0], GP_use_);
+						GPBoost::sparse_dense_matmul(B_rm_[cluster_i][0], (*cross_cov), B_cross_cov_[cluster_i][0], GPU_use_);
+						GPBoost::sparse_dense_matmul(D_inv_rm_[cluster_i][0], B_cross_cov_[cluster_i][0], D_inv_B_cross_cov_[cluster_i][0], GPU_use_);
+						GPBoost::sparse_dense_matmul(B_t_D_inv_rm_[cluster_i][0], B_cross_cov_[cluster_i][0], B_T_D_inv_B_cross_cov_[cluster_i][0], GPU_use_);
 //#pragma omp parallel for schedule(static)   
 //						for (int i = 0; i < num_ind_points_; ++i) {
 //							B_cross_cov_[cluster_i][0].col(i) = B_rm_[cluster_i][0] * (*cross_cov).col(i);
@@ -8211,9 +8211,9 @@ namespace GPBoost {
 //							B_T_D_inv_B_cross_cov_[cluster_i][0].col(i) = B_t_D_inv_rm_[cluster_i][0] * B_cross_cov_[cluster_i][0].col(i);
 //						}
 						begin = std::chrono::steady_clock::now();//only for debugging //GPU_INFO: Sparce x Dense seems to be slower on GPU (also just 1 multiplication)
-						GPBoost::sparse_dense_matmul(B_rm_[cluster_i][0], (*cross_cov), B_cross_cov_[cluster_i][0], GP_use_);
-						GPBoost::sparse_dense_matmul(D_inv_rm_[cluster_i][0], B_cross_cov_[cluster_i][0], D_inv_B_cross_cov_[cluster_i][0], GP_use_);
-						GPBoost::sparse_dense_matmul(B_t_D_inv_rm_[cluster_i][0], B_cross_cov_[cluster_i][0], B_T_D_inv_B_cross_cov_[cluster_i][0], GP_use_);
+						GPBoost::sparse_dense_matmul(B_rm_[cluster_i][0], (*cross_cov), B_cross_cov_[cluster_i][0], GPU_use_);
+						GPBoost::sparse_dense_matmul(D_inv_rm_[cluster_i][0], B_cross_cov_[cluster_i][0], D_inv_B_cross_cov_[cluster_i][0], GPU_use_);
+						GPBoost::sparse_dense_matmul(B_t_D_inv_rm_[cluster_i][0], B_cross_cov_[cluster_i][0], B_T_D_inv_B_cross_cov_[cluster_i][0], GPU_use_);
 						end = std::chrono::steady_clock::now();//only for debugging
 						el_time = (double)(std::chrono::duration_cast<std::chrono::microseconds>(end - begin).count()) / 1000000.;//only for debugging
 						Log::REInfo("Sparse MM time until = %g ", el_time);
