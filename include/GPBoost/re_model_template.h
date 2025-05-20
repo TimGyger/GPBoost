@@ -1754,18 +1754,20 @@ namespace GPBoost {
 						sp_mat_rm_t B_grad_rm = sp_mat_rm_t(B_grad_[cluster_i][0][num_par_comp * j + ipar]);
 						// B_grad * cross_cov
 						den_mat_t cross_cov_B_grad(num_data_per_cluster_[cluster_i], num_ind_points_);
-#pragma omp parallel for schedule(static)   
-						for (int i = 0; i < num_ind_points_; ++i) {
-							cross_cov_B_grad.col(i) = B_grad_rm * (*cross_cov).col(i);
-						}
+//#pragma omp parallel for schedule(static)   
+//						for (int i = 0; i < num_ind_points_; ++i) {
+//							cross_cov_B_grad.col(i) = B_grad_rm * (*cross_cov).col(i);
+//						}
+						GPBoost::sparse_dense_matmul(B_grad_rm, (*cross_cov), cross_cov_B_grad, GPU_use_);
 						// row-major
 						sp_mat_rm_t D_grad_rm = sp_mat_rm_t(D_grad_[cluster_i][0][num_par_comp * j + ipar]);
 						// D_grad * D^-1 * B * t(cross_cov)
 						den_mat_t D_grad_sigma_resid_inv_cross_cov_T(num_data_per_cluster_[cluster_i], num_ind_points_);
-#pragma omp parallel for schedule(static)   
-						for (int i = 0; i < num_ind_points_; ++i) {
-							D_grad_sigma_resid_inv_cross_cov_T.col(i) = D_grad_rm * D_inv_B_cross_cov_[cluster_i][0].col(i);
-						}
+//#pragma omp parallel for schedule(static)   
+//						for (int i = 0; i < num_ind_points_; ++i) {
+//							D_grad_sigma_resid_inv_cross_cov_T.col(i) = D_grad_rm * D_inv_B_cross_cov_[cluster_i][0].col(i);
+//						}
+						GPBoost::sparse_dense_matmul(D_grad_rm, D_inv_B_cross_cov_[cluster_i][0], D_grad_sigma_resid_inv_cross_cov_T, GPU_use_);
 						// cross_crov_grad *  sigma_resid^-1 * t(cross_cov)
 						//cross_cov_grad_sigma_resid_inv_cross_cov_T = (*cross_cov_grad).transpose() * B_T_D_inv_B_cross_cov_[cluster_i][0];
 						GPBoost::matmul((*cross_cov_grad).transpose(), B_T_D_inv_B_cross_cov_[cluster_i][0], cross_cov_grad_sigma_resid_inv_cross_cov_T, GPU_use_);
@@ -6695,7 +6697,7 @@ namespace GPBoost {
 						//GPBoost::cholesky_solver(chol_fact_sigma_ip_[cluster_i][0], sigma_ip_stable, GPU_use_);
 						//end = std::chrono::steady_clock::now();//only for debugging
 						//el_time = (double)(std::chrono::duration_cast<std::chrono::microseconds>(end - begin).count()) / 1000000.;//only for debugging
-						//og::REInfo("cholesky_solver time until = %g ", el_time);
+						//Log::REInfo("cholesky_solver time until = %g ", el_time);
 						const den_mat_t* cross_cov = re_comps_cross_cov_[cluster_i][0][j]->GetSigmaPtr();
 						if (gp_approx_ == "fitc") {
 							den_mat_t sigma_ip_Ihalf_sigma_cross_covT = (*cross_cov).transpose();
@@ -6710,10 +6712,15 @@ namespace GPBoost {
 								fitc_resid_diag_[cluster_i] = vec_t::Zero(re_comps_cross_cov_[cluster_i][0][0]->GetNumUniqueREs());
 							}
 							fitc_resid_diag_[cluster_i].array() += sigma_ip_stable.coeffRef(0, 0);
-#pragma omp parallel for schedule(static)
-							for (int ii = 0; ii < re_comps_cross_cov_[cluster_i][0][0]->GetNumUniqueREs(); ++ii) {
-								fitc_resid_diag_[cluster_i][ii] -= sigma_ip_Ihalf_sigma_cross_covT.col(ii).array().square().sum();
-							}
+//#pragma omp parallel for schedule(static)
+//							for (int ii = 0; ii < re_comps_cross_cov_[cluster_i][0][0]->GetNumUniqueREs(); ++ii) {
+//								fitc_resid_diag_[cluster_i][ii] -= sigma_ip_Ihalf_sigma_cross_covT.col(ii).array().square().sum();
+//							}
+							begin = std::chrono::steady_clock::now();//only for debugging
+							GPBoost::update_resid_diag(fitc_resid_diag_[cluster_i], sigma_ip_Ihalf_sigma_cross_covT, GPU_use_);
+							end = std::chrono::steady_clock::now();//only for debugging
+							el_time = (double)(std::chrono::duration_cast<std::chrono::microseconds>(end - begin).count()) / 1000000.;//only for debugging
+							Log::REInfo("DotP time until = %g ", el_time);
 						}
 						else if (gp_approx_ == "full_scale_tapering" || gp_approx_ == "full_scale_vecchia") {
 							// Subtract predictive process covariance

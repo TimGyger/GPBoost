@@ -437,6 +437,17 @@ namespace GPBoost {
 		X_host = chol.solve(R_host);
 	}
 
+	void update_resid_diag(vec_t& D, const den_mat_t& A, bool GPU_use) {
+		if (GPU_use) {
+			Log::REInfo("[Fallback] Not able to compile CUDA Code. Continuing with CPU support.");
+			GPU_use = false;
+		}
+#pragma omp parallel for schedule(static)
+		for (int ii = 0; ii < A.cols(); ++ii) {
+			D[ii] -= A.col(ii).array().square().sum();
+		}
+	}
+
 	// Cholesky Factor
 	void cholesky_solver(chol_den_mat_t& llt, const den_mat_t& A_input, bool GPU_use) {
 		if (GPU_use) {
@@ -573,6 +584,40 @@ namespace GPBoost {
 			X_host = chol.solve(R_host);
 		}
 	}
+
+	bool try_update_resid_diag_gpu(vec_t& D, const den_mat_t& A);
+
+	void update_resid_diag(vec_t& D, const den_mat_t& A, bool GPU_use) {
+		if (!GPU_use) {
+			Log::REInfo("[Fallback] Forced Eigen dotproducts.");
+#pragma omp parallel for schedule(static)
+			for (int ii = 0; ii < A.cols(); ++ii) {
+				D[ii] -= A.col(ii).array().square().sum();
+			}
+			return;
+		}
+		int device_count = 0;
+		cudaError_t err = cudaGetDeviceCount(&device_count);
+		if (err != cudaSuccess || device_count == 0) {
+			Log::REInfo("[Fallback] No CUDA devices found. Using Eigen for dotproducts.");
+#pragma omp parallel for schedule(static)
+			for (int ii = 0; ii < A.cols(); ++ii) {
+				D[ii] -= A.col(ii).array().square().sum();
+			}
+			GPU_use = false;
+			return;
+		}
+
+		if (!try_update_resid_diag_gpu(D, A)) {
+			Log::REInfo("[Fallback] Error in computation on GPU. Using Eigen for dotproducts.");
+#pragma omp parallel for schedule(static)
+			for (int ii = 0; ii < A.cols(); ++ii) {
+				D[ii] -= A.col(ii).array().square().sum();
+			}
+		}
+	}
+
+
 	/*
 	// Cholesky Factor
 	bool cholesky_cusolver_to_eigen(chol_den_mat_t& llt, const den_mat_t& A_input);

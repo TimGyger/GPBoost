@@ -602,6 +602,8 @@ namespace GPBoost {
 	*/
 	//void cholesky_solver(chol_den_mat_t& llt, const den_mat_t& A_input, bool GPU_use);
 
+	void update_resid_diag(vec_t& D, const den_mat_t& A, bool GPU_use);
+
 }  // namespace GPBoost
 
 #endif   // GPB_GP_UTIL_H_
