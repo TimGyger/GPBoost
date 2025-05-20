@@ -15,7 +15,7 @@
 #include <cuda_runtime.h>
 #include <cublas_v2.h>
 #include <cusparse.h>
-#include <cusolverDn.h>
+//#include <cusolverDn.h>
 #endif
 
 
@@ -573,7 +573,7 @@ namespace GPBoost {
 			X_host = chol.solve(R_host);
 		}
 	}
-
+	/*
 	// Cholesky Factor
 	bool cholesky_cusolver_to_eigen(chol_den_mat_t& llt, const den_mat_t& A_input);
 
@@ -596,7 +596,7 @@ namespace GPBoost {
 			Log::REInfo("[Fallback] Error in computation on GPU. Using Eigen for Cholesky factorization.");
 			llt.compute(A_input);
 		}
-	}
+	}*/
 #endif
 
 }  // namespace GPBoost

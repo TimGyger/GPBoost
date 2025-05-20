@@ -600,7 +600,7 @@ namespace GPBoost {
 	* \param A_input Matrix
 	* \param GPU_use if false Use CPU
 	*/
-	void cholesky_solver(chol_den_mat_t& llt, const den_mat_t& A_input, bool GPU_use);
+	//void cholesky_solver(chol_den_mat_t& llt, const den_mat_t& A_input, bool GPU_use);
 
 }  // namespace GPBoost
 

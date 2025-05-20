@@ -12,7 +12,7 @@
 #include <cuda_runtime.h>
 #include <cublas_v2.h>
 #include <cusparse.h>
-#include <cusolverDn.h>
+//#include <cusolverDn.h>
 #include <LightGBM/utils/log.h>
 using LightGBM::Log;
 
@@ -394,7 +394,7 @@ namespace GPBoost {
         Log::REInfo("[GPU] Full Cholesky solve (Sigma^-1 * R) with cuBLAS.");
         return true;
     }
-
+    /*
     bool cholesky_cusolver_to_eigen(chol_den_mat_t& llt, const den_mat_t& A_input) {
         int N = A_input.rows();
         if (A_input.cols() != N) return false;
@@ -440,7 +440,7 @@ namespace GPBoost {
 
         Log::REInfo("[GPU] Cholesky Factorization with cuSOLVE.");
         return true;
-    }
+    }*/
 
 }  // namespace GPBoost
 
