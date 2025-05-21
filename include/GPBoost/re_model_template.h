@@ -1721,7 +1721,14 @@ namespace GPBoost {
 					if (cg_preconditioner_type_ == "fitc") {
 						const den_mat_t* cross_cov_preconditioner = re_comps_cross_cov_preconditioner_[cluster_i][0][j]->GetSigmaPtr();
 						den_mat_t diag_sigma_resid_inv_Z = diagonal_approx_inv_preconditioner_[cluster_i].asDiagonal() * rand_vec_probe_[cluster_i];
-						rand_vec_probe_P_inv = diag_sigma_resid_inv_Z - (diagonal_approx_inv_preconditioner_[cluster_i].asDiagonal() * ((*cross_cov_preconditioner) * chol_fact_woodbury_preconditioner_[cluster_i].solve((*cross_cov_preconditioner).transpose() * diag_sigma_resid_inv_Z)));
+						//rand_vec_probe_P_inv = diag_sigma_resid_inv_Z - (diagonal_approx_inv_preconditioner_[cluster_i].asDiagonal() * ((*cross_cov_preconditioner) * chol_fact_woodbury_preconditioner_[cluster_i].solve((*cross_cov_preconditioner).transpose() * diag_sigma_resid_inv_Z)));
+						den_mat_t rand_vec_probe_P_inv_interim1;
+						GPBoost::matmul((*cross_cov_preconditioner).transpose(), diag_sigma_resid_inv_Z, rand_vec_probe_P_inv_interim1, GPU_use_);
+						den_mat_t rand_vec_probe_P_inv_interim2;
+						GPBoost::solve_linear_sys(chol_fact_woodbury_preconditioner_[cluster_i], rand_vec_probe_P_inv_interim1, rand_vec_probe_P_inv_interim2, GPU_use_);
+						den_mat_t rand_vec_probe_P_inv_interim3;
+						GPBoost::matmul((*cross_cov_preconditioner), rand_vec_probe_P_inv_interim2, rand_vec_probe_P_inv_interim3, GPU_use_);
+						rand_vec_probe_P_inv = diag_sigma_resid_inv_Z - (diagonal_approx_inv_preconditioner_[cluster_i].asDiagonal()* rand_vec_probe_P_inv_interim3);
 					}
 					else {
 						rand_vec_probe_P_inv = rand_vec_probe_[cluster_i];
@@ -1847,10 +1854,22 @@ namespace GPBoost {
 							for (int i = 0; i < rand_vec_probe_P_inv.cols(); ++i) {
 								sigma_resid_grad_Z.col(i) += (*sigma_resid_grad) * rand_vec_probe_P_inv.col(i); //parallelization in for loop is much faster
 							}
-							den_mat_t sigma_ip_inv_sigma_cross_cov_Z = sigma_ip_inv_sigma_cross_cov * rand_vec_probe_P_inv;
-							den_mat_t sigma_grad_Z = sigma_resid_grad_Z + (*cross_cov_grad) * sigma_ip_inv_sigma_cross_cov_Z +
-								sigma_ip_inv_sigma_cross_cov.transpose() * ((*cross_cov_grad).transpose() * rand_vec_probe_P_inv) -
-								sigma_ip_inv_sigma_cross_cov.transpose() * (sigma_ip_stable_grad * sigma_ip_inv_sigma_cross_cov_Z);
+							//den_mat_t sigma_ip_inv_sigma_cross_cov_Z = sigma_ip_inv_sigma_cross_cov * rand_vec_probe_P_inv;
+							den_mat_t sigma_ip_inv_sigma_cross_cov_Z;
+							GPBoost::matmul(sigma_ip_inv_sigma_cross_cov, rand_vec_probe_P_inv, sigma_ip_inv_sigma_cross_cov_Z, GPU_use_);
+							//den_mat_t sigma_grad_Z = sigma_resid_grad_Z + (*cross_cov_grad) * sigma_ip_inv_sigma_cross_cov_Z +
+							//	sigma_ip_inv_sigma_cross_cov.transpose() * ((*cross_cov_grad).transpose() * rand_vec_probe_P_inv) -
+							//	sigma_ip_inv_sigma_cross_cov.transpose() * (sigma_ip_stable_grad * sigma_ip_inv_sigma_cross_cov_Z);
+							den_mat_t cross_cov_grad_sigma_ip_inv_sigma_cross_cov_Z;
+							GPBoost::matmul((*cross_cov_grad), sigma_ip_inv_sigma_cross_cov_Z, cross_cov_grad_sigma_ip_inv_sigma_cross_cov_Z, GPU_use_);
+							den_mat_t cross_cov_grad_rand_vec_probe_P_inv;
+							GPBoost::matmul((*cross_cov_grad).transpose(), rand_vec_probe_P_inv, cross_cov_grad_rand_vec_probe_P_inv, GPU_use_);
+							den_mat_t sigma_ip_inv_cross_cov_grad_rand_vec_probe_P_inv;
+							GPBoost::matmul(sigma_ip_inv_sigma_cross_cov.transpose(), cross_cov_grad_rand_vec_probe_P_inv, sigma_ip_inv_cross_cov_grad_rand_vec_probe_P_inv, GPU_use_);
+							den_mat_t sigma_ip_inv_sigma_ip_grad_rand_vec_probe_P_inv;
+							GPBoost::matmul(sigma_ip_inv_sigma_cross_cov.transpose(), (sigma_ip_stable_grad* sigma_ip_inv_sigma_cross_cov_Z), sigma_ip_inv_sigma_ip_grad_rand_vec_probe_P_inv, GPU_use_);
+							den_mat_t sigma_grad_Z = sigma_resid_grad_Z + cross_cov_grad_sigma_ip_inv_sigma_cross_cov_Z +
+								sigma_ip_inv_cross_cov_grad_rand_vec_probe_P_inv - sigma_ip_inv_sigma_ip_grad_rand_vec_probe_P_inv;
 							// Stochastic Trace
 							vec_t sample_Sigma = (solution_for_trace_[cluster_i].cwiseProduct(sigma_grad_Z)).colwise().sum();
 							double stochastic_tr = sample_Sigma.mean();
@@ -1868,7 +1887,9 @@ namespace GPBoost {
 								double Tr_P = 0;
 								Tr_P -= sigma_ip_inv_sigma_ip_stable_grad.trace();
 								Tr_P += diagonal_approx_inv_preconditioner_[cluster_i].dot(diagonal_approx_grad_preconditioner);
-								den_mat_t sigma_woodbury_inv_sigma_woodbury_stable_grad = chol_fact_woodbury_preconditioner_[cluster_i].solve(sigma_woodbury_preconditioner_grad);
+								//den_mat_t sigma_woodbury_inv_sigma_woodbury_stable_grad = chol_fact_woodbury_preconditioner_[cluster_i].solve(sigma_woodbury_preconditioner_grad);
+								den_mat_t sigma_woodbury_inv_sigma_woodbury_stable_grad;
+								GPBoost::solve_linear_sys(chol_fact_woodbury_preconditioner_[cluster_i], sigma_woodbury_preconditioner_grad, sigma_woodbury_inv_sigma_woodbury_stable_grad, GPU_use_);
 								Tr_P += sigma_woodbury_inv_sigma_woodbury_stable_grad.trace();
 								// Calculate optimal c
 								double c_opt;
@@ -2398,7 +2419,9 @@ namespace GPBoost {
 								}
 							}
 							if (cg_preconditioner_type_ == "fitc") {
-								den_mat_t chol_ip_cross_cov_Z = chol_ip_cross_cov_preconditioner_[cluster_i][0].transpose() * rand_vec_probe_low_rank_[cluster_i];
+								//den_mat_t chol_ip_cross_cov_Z = chol_ip_cross_cov_preconditioner_[cluster_i][0].transpose() * rand_vec_probe_low_rank_[cluster_i];
+								den_mat_t chol_ip_cross_cov_Z;
+								GPBoost::matmul(chol_ip_cross_cov_preconditioner_[cluster_i][0].transpose(), rand_vec_probe_low_rank_[cluster_i], chol_ip_cross_cov_Z, GPU_use_);
 								rand_vec_probe_[cluster_i] = chol_ip_cross_cov_Z + diagonal_approx_preconditioner_[cluster_i].cwiseSqrt().asDiagonal() * rand_vec_probe_P_[cluster_i];
 							}
 							const den_mat_t* cross_cov = re_comps_cross_cov_[cluster_i][0][0]->GetSigmaPtr();

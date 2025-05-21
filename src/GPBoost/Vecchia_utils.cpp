@@ -1699,14 +1699,21 @@ namespace GPBoost {
 					for (int i = 0; i < (*sigma_cross_cov).cols(); ++i) {
 						Vecchia_cross_cov.col(i) = Bt_D_inv_cluster_i * (B_cluster_i * (*sigma_cross_cov).col(i));
 					}
-					den_mat_t cross_cov_PP_Vecchia = chol_ip_cross_cov_pred.transpose() * (chol_ip_cross_cov_obs * Vecchia_cross_cov);
+					//den_mat_t cross_cov_PP_Vecchia = chol_ip_cross_cov_pred.transpose() * (chol_ip_cross_cov_obs * Vecchia_cross_cov);
+					den_mat_t cross_cov_PP_Vecchia_interim;
+					GPBoost::matmul(chol_ip_cross_cov_obs, Vecchia_cross_cov, cross_cov_PP_Vecchia_interim, GPU_use);
+					den_mat_t cross_cov_PP_Vecchia;
+					GPBoost::matmul(chol_ip_cross_cov_pred.transpose(), cross_cov_PP_Vecchia, cross_cov_PP_Vecchia, GPU_use);
 					den_mat_t cross_cov_pred_obs_pred_inv;
 					den_mat_t B_po_cross_cov(num_re_pred_cli, (*sigma_cross_cov).cols());
-#pragma omp parallel for schedule(static)   
-					for (int i = 0; i < (*sigma_cross_cov).cols(); ++i) {
-						B_po_cross_cov.col(i) = Bpo_rm * (*sigma_cross_cov).col(i);
-					}
-					den_mat_t cross_cov_PP_Vecchia_woodbury = chol_fact_sigma_woodbury_cluster_i.solve(cross_cov_PP_Vecchia.transpose());
+//#pragma omp parallel for schedule(static)   
+//					for (int i = 0; i < (*sigma_cross_cov).cols(); ++i) {
+//						B_po_cross_cov.col(i) = Bpo_rm * (*sigma_cross_cov).col(i);
+//					}
+					GPBoost::sparse_dense_matmul(Bpo_rm, (*sigma_cross_cov), B_po_cross_cov, GPU_use);
+					//den_mat_t cross_cov_PP_Vecchia_woodbury = chol_fact_sigma_woodbury_cluster_i.solve(cross_cov_PP_Vecchia.transpose());
+					den_mat_t cross_cov_PP_Vecchia_woodbury;
+					GPBoost::solve_linear_sys(chol_fact_sigma_woodbury_cluster_i, cross_cov_PP_Vecchia.transpose(), cross_cov_PP_Vecchia_woodbury, GPU_use);
 					sp_mat_t Bp_inv_Dp;
 					sp_mat_t Bp_inv(num_re_pred_cli, num_re_pred_cli);
 					if (CondObsOnly) {
@@ -1734,7 +1741,9 @@ namespace GPBoost {
 							}
 						}
 					}
-					den_mat_t cross_cov_pred_obs_pred_inv_woodbury = chol_fact_sigma_woodbury_cluster_i.solve(cross_cov_pred_obs_pred_inv.transpose());
+					//den_mat_t cross_cov_pred_obs_pred_inv_woodbury = chol_fact_sigma_woodbury_cluster_i.solve(cross_cov_pred_obs_pred_inv.transpose());
+					den_mat_t cross_cov_pred_obs_pred_inv_woodbury;
+					GPBoost::solve_linear_sys(chol_fact_sigma_woodbury_cluster_i, cross_cov_pred_obs_pred_inv.transpose(), cross_cov_pred_obs_pred_inv_woodbury, GPU_use);
 					if (calc_pred_cov) {
 						if (num_re_pred_cli > 10000) {
 							Log::REInfo("The computational complexity and the storage of the predictive covariance martix heavily depend on the number of prediction location. "
