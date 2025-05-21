@@ -8,8 +8,11 @@
 */
 #include <GPBoost/Vecchia_utils.h>
 #include <GPBoost/utils.h>
+#include <GPBoost/GP_utils.h>
 #include <cmath>
 #include <algorithm> // copy
+#include <chrono>  // only for debugging
+#include <thread> // only for debugging
 #include <LightGBM/utils/log.h>
 using LightGBM::Log;
 
@@ -1446,7 +1449,8 @@ namespace GPBoost {
 		sp_mat_t& Bp,
 		vec_t& Dp,
 		bool save_distances_isotropic_cov_fct,
-		string_t& gp_approx) {
+		string_t& gp_approx,
+		bool GPU_use) {
 		data_size_t num_re_cli = re_comps_vecchia[ind_intercept_gp]->GetNumUniqueREs();
 		std::shared_ptr<RECompGP<den_mat_t>> re_comp = re_comps_vecchia[ind_intercept_gp];
 		int num_re_pred_cli = (int)gp_coords_mat_pred.rows();
@@ -1471,21 +1475,34 @@ namespace GPBoost {
 		std::shared_ptr<RECompGP<den_mat_t>> re_comp_cross_cov_cluster_i_pred_ip;
 		// Components for prediction of full scale vecchia
 		if (gp_approx == "full_scale_vecchia") {
+			Log::REInfo("CalcGradPars_FITC_FSA_GaussLikelihood_Cluster_i");//only for debugging
+			std::chrono::steady_clock::time_point begin, end;//only for debugging
+			double el_time;//only for debugging
 			const den_mat_t* sigma_cross_cov = re_comps_cross_cov_cluster_i[0]->GetSigmaPtr();
 			re_comp_cross_cov_cluster_i_pred_ip = re_comps_cross_cov_cluster_i[0];
 			re_comp_cross_cov_cluster_i_pred_ip->AddPredCovMatrices(gp_coords_mat_ip, gp_coords_mat_pred, cross_cov_pred_ip,
 				cov_mat_pred_id, true, false, true, nullptr, false, cross_dist);
-			TriangularSolveGivenCholesky<chol_den_mat_t, den_mat_t, den_mat_t, den_mat_t>(chol_fact_sigma_ip_cluster_i,
-				(*sigma_cross_cov).transpose(), chol_ip_cross_cov_obs, false);
-			TriangularSolveGivenCholesky<chol_den_mat_t, den_mat_t, den_mat_t, den_mat_t>(chol_fact_sigma_ip_cluster_i,
-				cross_cov_pred_ip.transpose(), chol_ip_cross_cov_pred, false);
-			sigma_ip_inv_sigma_cross_cov = chol_fact_sigma_ip_cluster_i.solve((*sigma_cross_cov).transpose());
-			sigma_ip_inv_sigma_cross_cov_pred = chol_fact_sigma_ip_cluster_i.solve(cross_cov_pred_ip.transpose());
+			begin = std::chrono::steady_clock::now();//only for debugging
+			//TriangularSolveGivenCholesky<chol_den_mat_t, den_mat_t, den_mat_t, den_mat_t>(chol_fact_sigma_ip_cluster_i,
+			//	(*sigma_cross_cov).transpose(), chol_ip_cross_cov_obs, false);
+			GPBoost::solve_lower_triangular(chol_fact_sigma_ip_cluster_i,
+				(*sigma_cross_cov).transpose(), chol_ip_cross_cov_obs, GPU_use);
+			//TriangularSolveGivenCholesky<chol_den_mat_t, den_mat_t, den_mat_t, den_mat_t>(chol_fact_sigma_ip_cluster_i,
+			//	cross_cov_pred_ip.transpose(), chol_ip_cross_cov_pred, false);
+			GPBoost::solve_lower_triangular(chol_fact_sigma_ip_cluster_i,
+				cross_cov_pred_ip.transpose(), chol_ip_cross_cov_pred, GPU_use);
+			//sigma_ip_inv_sigma_cross_cov = chol_fact_sigma_ip_cluster_i.solve((*sigma_cross_cov).transpose());
+			GPBoost::solve_linear_sys(chol_fact_sigma_ip_cluster_i, (*sigma_cross_cov).transpose(), sigma_ip_inv_sigma_cross_cov, GPU_use);
+			//sigma_ip_inv_sigma_cross_cov_pred = chol_fact_sigma_ip_cluster_i.solve(cross_cov_pred_ip.transpose());
+			GPBoost::solve_linear_sys(chol_fact_sigma_ip_cluster_i, cross_cov_pred_ip.transpose(), sigma_ip_inv_sigma_cross_cov_pred, GPU_use);
 			if (vecchia_neighbor_selection == "residual_correlation") {
 				chol_ip_cross_cov_obs_pred.resize(chol_ip_cross_cov_obs.rows(), chol_ip_cross_cov_obs.cols() + chol_ip_cross_cov_pred.cols());
 				chol_ip_cross_cov_obs_pred.leftCols(chol_ip_cross_cov_obs.cols()) = chol_ip_cross_cov_obs;
 				chol_ip_cross_cov_obs_pred.rightCols(chol_ip_cross_cov_pred.cols()) = chol_ip_cross_cov_pred;
 			}
+			end = std::chrono::steady_clock::now();//only for debugging
+			el_time = (double)(std::chrono::duration_cast<std::chrono::microseconds>(end - begin).count()) / 1000000.;//only for debugging
+			Log::REInfo("CalcGradPars_FITC_FSA_GaussLikelihood_Cluster_i time until = %g ", el_time);
 		}
 		if (CondObsOnly) {
 			if (gp_approx == "full_scale_vecchia" && vecchia_neighbor_selection == "residual_correlation") {
