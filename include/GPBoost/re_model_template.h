@@ -6711,13 +6711,12 @@ namespace GPBoost {
 							else {
 								fitc_resid_diag_[cluster_i] = vec_t::Zero(re_comps_cross_cov_[cluster_i][0][0]->GetNumUniqueREs());
 							}
-							fitc_resid_diag_[cluster_i].array() += sigma_ip_stable.coeffRef(0, 0);
-//#pragma omp parallel for schedule(static)
-//							for (int ii = 0; ii < re_comps_cross_cov_[cluster_i][0][0]->GetNumUniqueREs(); ++ii) {
-//								fitc_resid_diag_[cluster_i][ii] -= sigma_ip_Ihalf_sigma_cross_covT.col(ii).array().square().sum();
-//							}
 							begin = std::chrono::steady_clock::now();//only for debugging
-							GPBoost::update_resid_diag(fitc_resid_diag_[cluster_i], sigma_ip_Ihalf_sigma_cross_covT, GPU_use_);
+							fitc_resid_diag_[cluster_i].array() += sigma_ip_stable.coeffRef(0, 0);
+#pragma omp parallel for schedule(static)
+							for (int ii = 0; ii < re_comps_cross_cov_[cluster_i][0][0]->GetNumUniqueREs(); ++ii) {
+								fitc_resid_diag_[cluster_i][ii] -= sigma_ip_Ihalf_sigma_cross_covT.col(ii).array().square().sum();
+							}
 							end = std::chrono::steady_clock::now();//only for debugging
 							el_time = (double)(std::chrono::duration_cast<std::chrono::microseconds>(end - begin).count()) / 1000000.;//only for debugging
 							Log::REInfo("DotP time until = %g ", el_time);
