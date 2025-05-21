@@ -3531,7 +3531,7 @@ namespace GPBoost {
 											B_rm_[cluster_i][0], B_t_D_inv_rm_[cluster_i][0],
 											data_indices_per_cluster_pred, re_comp_gp->coords_, gp_coords_mat_pred, gp_rand_coef_data_pred, gp_coords_mat_ip, num_neighbors_pred_, vecchia_neighbor_selection_,
 											re_comps_vecchia_[cluster_i][igp], ind_intercept_gp_, num_gp_rand_coef_, num_gp_total_, y_[cluster_i], gauss_likelihood_, rng_,
-											false, false, mean_pred_id[igp], cov_mat_pred_vecchia_id, var_pred_id[igp], Bpo[igp], Bp[igp], Dp[igp], save_distances_isotropic_cov_fct_Vecchia_, gp_approx_);
+											false, false, mean_pred_id[igp], cov_mat_pred_vecchia_id, var_pred_id[igp], Bpo[igp], Bp[igp], Dp[igp], save_distances_isotropic_cov_fct_Vecchia_, gp_approx_, GPU_use_);
 										likelihood_[cluster_i]->PredictLaplaceApproxVecchia(y_[cluster_i].data(), y_int_[cluster_i].data(), fixed_effects_cluster_i_ptr,
 											B_[cluster_i], D_inv_[cluster_i], Bpo[igp], Bp[igp], Dp[igp],
 											mean_pred_id[igp], cov_mat_pred_vecchia_id, var_pred_id[igp],
