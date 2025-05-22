@@ -1683,7 +1683,7 @@ namespace GPBoost {
 			int first_cov_par,
 			data_size_t cluster_i) {
 			Log::REInfo("CalcGradPars_FITC_FSA_GaussLikelihood_Cluster_i");//only for debugging
-			std::chrono::steady_clock::time_point begin, begin1, end;//only for debugging
+			std::chrono::steady_clock::time_point begin, end;//only for debugging
 			double el_time;//only for debugging
 			begin = std::chrono::steady_clock::now();//only for debugging
 			CHECK(gp_approx_ == "fitc" || gp_approx_ == "full_scale_tapering" || gp_approx_ == "full_scale_vecchia");
@@ -1808,23 +1808,19 @@ namespace GPBoost {
 						den_mat_t sigma_ip_stable_grad_sigma_ip_inv_sigma_cross_cov;// = sigma_ip_stable_grad * sigma_ip_inv_sigma_cross_cov;
 						GPBoost::matmul(sigma_ip_stable_grad, sigma_ip_inv_sigma_cross_cov, sigma_ip_stable_grad_sigma_ip_inv_sigma_cross_cov, GPU_use_);
 						//SubtractProdFromMat<T_mat>(*sigma_resid_grad, -sigma_ip_inv_sigma_cross_cov, sigma_ip_stable_grad * sigma_ip_inv_sigma_cross_cov, true);
-						begin1 = std::chrono::steady_clock::now();//only for debugging
 						GPBoost::SubtractProdFromMatrix<T_mat>(*sigma_resid_grad, -sigma_ip_inv_sigma_cross_cov, sigma_ip_stable_grad_sigma_ip_inv_sigma_cross_cov, true, GPU_use_);
-						end = std::chrono::steady_clock::now();//only for debugging
-						el_time = (double)(std::chrono::duration_cast<std::chrono::microseconds>(end - begin1).count()) / 1000000.;//only for debugging
-						Log::REInfo("SubtractProdFromMatrix1 time until = %g ", el_time);
 						//SubtractProdFromMat<T_mat>(*sigma_resid_grad, (*cross_cov_grad).transpose(), sigma_ip_inv_sigma_cross_cov, false);
 						GPBoost::SubtractProdFromMatrix<T_mat>(*sigma_resid_grad, (*cross_cov_grad).transpose(), sigma_ip_inv_sigma_cross_cov, false, GPU_use_);
-						end = std::chrono::steady_clock::now();//only for debugging
-						el_time = (double)(std::chrono::duration_cast<std::chrono::microseconds>(end - begin1).count()) / 1000000.;//only for debugging
-						Log::REInfo("SubtractProdFromMatrix2 time until = %g ", el_time);
 						//SubtractProdFromMat<T_mat>(*sigma_resid_grad, sigma_ip_inv_sigma_cross_cov, (*cross_cov_grad).transpose(), false);
 						GPBoost::SubtractProdFromMatrix<T_mat>(*sigma_resid_grad, sigma_ip_inv_sigma_cross_cov, (*cross_cov_grad).transpose(), false, GPU_use_);
-						end = std::chrono::steady_clock::now();//only for debugging
-						el_time = (double)(std::chrono::duration_cast<std::chrono::microseconds>(end - begin1).count()) / 1000000.;//only for debugging
-						Log::REInfo("SubtractProdFromMatrix3 time until = %g ", el_time);
 						// Apply taper
+						end = std::chrono::steady_clock::now();//only for debugging
+						el_time = (double)(std::chrono::duration_cast<std::chrono::microseconds>(end - begin).count()) / 1000000.;//only for debugging
+						Log::REInfo("CalcGradPars_FITC_FSA_GaussLikelihood_Cluster_i time until = %g ", el_time);
 						re_comps_resid_[cluster_i][0][j]->ApplyTaper(*(re_comps_resid_[cluster_i][0][j]->dist_), *sigma_resid_grad);
+						end = std::chrono::steady_clock::now();//only for debugging
+						el_time = (double)(std::chrono::duration_cast<std::chrono::microseconds>(end - begin).count()) / 1000000.;//only for debugging
+						Log::REInfo("CalcGradPars_FITC_FSA_GaussLikelihood_Cluster_i time until = %g ", el_time);
 						if (matrix_inversion_method_ == "cholesky") {
 							// cross_crov_grad *  sigma_resid^-1 * t(cross_cov)
 							//cross_cov_grad_sigma_resid_inv_cross_cov_T = ((*cross_cov_grad).transpose()) * sigma_resid_inv_cross_cov_T;
@@ -1840,6 +1836,9 @@ namespace GPBoost {
 						}
 						else if (matrix_inversion_method_ == "iterative") {// Conjugate Gradient
 							// Derivative of Woodbury preconditioner matrix (Cm + Cmn * diag(Cs)^-1 * Cnm) or (Lambda + t(EVects of Cm) * Cmn * diag(Cs)^-1 * Cnm * EVects of Cm)
+							end = std::chrono::steady_clock::now();//only for debugging
+							el_time = (double)(std::chrono::duration_cast<std::chrono::microseconds>(end - begin).count()) / 1000000.;//only for debugging
+							Log::REInfo("CalcGradPars_FITC_FSA_GaussLikelihood_Cluster_i time until = %g ", el_time);
 							den_mat_t sigma_woodbury_preconditioner_grad;
 							vec_t diagonal_approx_grad_preconditioner;
 							den_mat_t sigma_ip_stable_grad_preconditioner, cross_cov_grad_d_inv_cross_cov;
@@ -1859,6 +1858,9 @@ namespace GPBoost {
 								GPBoost::matmul(sigma_cross_cov_diag_sigma_resid_inv, D_grad_cross_cov, cross_cov_grad_d_inv_grad_cross_cov, GPU_use_);
 								sigma_woodbury_preconditioner_grad = sigma_ip_stable_grad_preconditioner + cross_cov_grad_d_inv_cross_cov + cross_cov_grad_d_inv_cross_cov.transpose() - cross_cov_grad_d_inv_grad_cross_cov;
 							}
+							end = std::chrono::steady_clock::now();//only for debugging
+							el_time = (double)(std::chrono::duration_cast<std::chrono::microseconds>(end - begin).count()) / 1000000.;//only for debugging
+							Log::REInfo("CalcGradPars_FITC_FSA_GaussLikelihood_Cluster_i time until = %g ", el_time);
 							den_mat_t sigma_ip_inv_sigma_ip_stable_grad;
 							//sigma_ip_inv_sigma_ip_stable_grad = chol_fact_sigma_ip_[cluster_i][0].solve(sigma_ip_stable_grad);
 							GPBoost::solve_linear_sys(chol_fact_sigma_ip_[cluster_i][0], sigma_ip_stable_grad, sigma_ip_inv_sigma_ip_stable_grad, GPU_use_);
@@ -1889,6 +1891,9 @@ namespace GPBoost {
 							vec_t sample_Sigma = (solution_for_trace_[cluster_i].cwiseProduct(sigma_grad_Z)).colwise().sum();
 							double stochastic_tr = sample_Sigma.mean();
 							// Variance Reduction 
+							end = std::chrono::steady_clock::now();//only for debugging
+							el_time = (double)(std::chrono::duration_cast<std::chrono::microseconds>(end - begin).count()) / 1000000.;//only for debugging
+							Log::REInfo("CalcGradPars_FITC_FSA_GaussLikelihood_Cluster_i time until = %g ", el_time);
 							if (cg_preconditioner_type_ == "fitc") {
 								//const den_mat_t* cross_cov_preconditioner = re_comps_cross_cov_preconditioner_[cluster_i][0][j]->GetSigmaPtr();
 								//den_mat_t sigma_cross_cov_diag_sigma_resid_inv = (*cross_cov_preconditioner).transpose() * diagonal_approx_inv_preconditioner_[cluster_i].asDiagonal();
