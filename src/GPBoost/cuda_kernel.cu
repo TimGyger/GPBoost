@@ -456,8 +456,7 @@ namespace GPBoost {
         int blockSize = 256;
         int numBlocks = (n + blockSize - 1) / blockSize;
         subtract_prod_from_sparse_mat_kernel << <numBlocks, blockSize >> > (
-            row_ptr, col_idx, values, M1, M2, n, m, K, only_triangular
-            );
+            row_ptr, col_idx, values, M1, M2, n, m, K);
         cudaDeviceSynchronize();
     }
 
