@@ -12,6 +12,7 @@
 #include <cuda_runtime.h>
 #include <cublas_v2.h>
 #include <cusparse.h>
+#include <device_launch_parameters.h>
 //#include <cusolverDn.h>
 #include <LightGBM/utils/log.h>
 using LightGBM::Log;
@@ -394,6 +395,59 @@ namespace GPBoost {
         Log::REInfo("[GPU] Full Cholesky solve (Sigma^-1 * R) with cuBLAS.");
         return true;
     }
+
+    // CUDA kernel: Sigma(i,j) -= dot(M1.col(i), M2.col(j))
+    __global__ void subtract_prod_from_mat_kernel(
+        const double* __restrict__ M1,
+        const double* __restrict__ M2,
+        double* Sigma,
+        int M1_rows, int M1_cols,
+        int M2_rows, int M2_cols,
+        bool only_triangular)
+    {
+        int i = blockIdx.y * blockDim.y + threadIdx.y;
+        int j = blockIdx.x * blockDim.x + threadIdx.x;
+
+        if (i >= M1_cols || j >= M2_cols) return;
+        if (only_triangular && j < i) return;
+
+        double dot = 0.0;
+        for (int k = 0; k < M1_rows; ++k) {
+            dot += M1[i * M1_rows + k] * M2[j * M2_rows + k];
+        }
+
+        // column-major access: Sigma(i, j) => j * rows + i
+        atomicAdd(&Sigma[j * M1_cols + i], -dot);
+
+        if (!only_triangular && j > i) {
+            atomicAdd(&Sigma[i * M1_cols + j], -dot);  // symmetric fill
+        }
+    }
+
+    __global__ void subtract_prod_from_sparse_mat_kernel(
+        int* row_ptr, int* col_idx, double* values,
+        const double* M1, const double* M2,
+        int n_rows, int n_cols, int K
+    ) {
+        int row = blockIdx.x * blockDim.x + threadIdx.x;
+        if (row >= n_rows) return;
+
+        int row_start = row_ptr[row];
+        int row_end = row_ptr[row + 1];
+
+        for (int idx = row_start; idx < row_end; ++idx) {
+            int col = col_idx[idx];
+            if (row <= col) {
+                double dot = 0.0;
+                for (int k = 0; k < K; ++k)
+                    dot += M1[k * n_rows + row] * M2[k * n_rows + col];
+
+                atomicAdd(&values[idx], -dot);
+            }
+            // Note: for full symmetry, the host must mirror Sigma(j,i) = Sigma(i,j) afterwards
+        }
+    }
+
     /*
     bool cholesky_cusolver_to_eigen(chol_den_mat_t& llt, const den_mat_t& A_input) {
         int N = A_input.rows();
@@ -428,7 +482,7 @@ namespace GPBoost {
         }
 
         // Step 5: Copy Cholesky factor back
-        Eigen::MatrixXd L(N, N);
+        den_mat_t L(N, N);
         cudaMemcpy(L.data(), d_A, sizeof(double) * N * N, cudaMemcpyDeviceToHost);
 
         // Step 6: Store result into LLT object (only lower triangle is valid)

@@ -12,6 +12,14 @@
 #include <GPBoost/type_defs.h>
 #include <GPBoost/utils.h>
 #include <LightGBM/utils/log.h>
+
+#ifdef USE_CUDA_GP
+#include <cuda_runtime.h>
+#include <cublas_v2.h>
+#include <cusparse.h>
+//#include <cusolverDn.h>
+#endif
+
 using LightGBM::Log;
 
 namespace GPBoost {
@@ -593,6 +601,165 @@ namespace GPBoost {
 	* \param GPU_use if false Use CPU
 	*/
 	void solve_linear_sys(const chol_den_mat_t& chol, const den_mat_t& R_host, den_mat_t& X_host, bool GPU_use);
+
+#ifdef USE_CUDA_GP
+
+	// Host function
+	template <class T_mat, typename std::enable_if <std::is_same<den_mat_t, T_mat>::value>::type* = nullptr >
+	bool try_SubtractProdFromMat_CUDA(T_mat& Sigma,
+		const den_mat_t& M1,
+		const den_mat_t& M2,
+		bool only_triangular)
+	{
+
+		const int n = Sigma.rows();
+		const int m = Sigma.cols();
+		const int k = M1.rows();  // Inner dimension
+		if (n != M1.cols() || m != M2.cols()) {
+			return false;
+		}
+		size_t size_M1 = sizeof(double) * k * n;
+		size_t size_M2 = sizeof(double) * k * m;
+		size_t size_Sigma = sizeof(double) * n * m;
+
+		double* d_M1;
+		double* d_M2;
+		double* d_Sigma;
+
+		cudaMalloc(&d_M1, size_M1);
+		cudaMalloc(&d_M2, size_M2);
+		cudaMalloc(&d_Sigma, size_Sigma);
+
+		cudaMemcpy(d_M1, M1.data(), size_M1, cudaMemcpyHostToDevice);
+		cudaMemcpy(d_M2, M2.data(), size_M2, cudaMemcpyHostToDevice);
+		cudaMemcpy(d_Sigma, Sigma.data(), size_Sigma, cudaMemcpyHostToDevice);
+
+		dim3 block(16, 16);
+		dim3 grid((m + block.x - 1) / block.x, (n + block.y - 1) / block.y);
+
+		subtract_prod_from_mat_kernel << <grid, block >> > (
+			d_M1, d_M2, d_Sigma,
+			k, n, k, m,
+			only_triangular
+			);
+
+		cudaMemcpy(Sigma.data(), d_Sigma, size_Sigma, cudaMemcpyDeviceToHost);
+
+		cudaFree(d_M1);
+		cudaFree(d_M2);
+		cudaFree(d_Sigma);
+
+		Log::REInfo("[GPU] Subtract product with cuBLAS.");
+		return true;
+	}
+	template <class T_mat, typename std::enable_if <std::is_same<sp_mat_t, T_mat>::value || std::is_same<sp_mat_rm_t, T_mat>::value>::type* = nullptr
+	bool try_SubtractProdFromMat_CUDA(T_mat & Sigma,
+			const den_mat_t & M1,
+			const den_mat_t & M2,
+			bool only_triangular)
+	{
+		const int n = Sigma.rows();
+		const int m = Sigma.cols();
+		const int K = M1.rows();
+
+		if (n != M1.cols() || m != M2.cols()) {
+			return false;
+		}
+
+		Sigma.makeCompressed();
+		const int nnz = Sigma.nonZeros();
+		const int* h_row_ptr = Sigma.outerIndexPtr();
+		const int* h_col_idx = Sigma.innerIndexPtr();
+		const double* h_values = Sigma.valuePtr();
+
+		// Allocate device memory
+		int* d_row_ptr, * d_col_idx;
+		double* d_values, * d_M1, * d_M2;
+		cudaMalloc(&d_row_ptr, (n + 1) * sizeof(int));
+		cudaMalloc(&d_col_idx, nnz * sizeof(int));
+		cudaMalloc(&d_values, nnz * sizeof(double));
+		cudaMalloc(&d_M1, K * m * sizeof(double));
+		cudaMalloc(&d_M2, K * m * sizeof(double));
+
+		// Copy data to device
+		cudaMemcpy(d_row_ptr, h_row_ptr, (n + 1) * sizeof(int), cudaMemcpyHostToDevice);
+		cudaMemcpy(d_col_idx, h_col_idx, nnz * sizeof(int), cudaMemcpyHostToDevice);
+		cudaMemcpy(d_values, h_values, nnz * sizeof(double), cudaMemcpyHostToDevice);
+		cudaMemcpy(d_M1, M1.data(), K * m * sizeof(double), cudaMemcpyHostToDevice);
+		cudaMemcpy(d_M2, M2.data(), K * m * sizeof(double), cudaMemcpyHostToDevice);
+
+		// Kernel launch
+		int blockSize = 256;
+		int numBlocks = (n + blockSize - 1) / blockSize;
+		subtract_prod_from_sparse_mat_kernel << <numBlocks, blockSize >> > (
+			d_row_ptr, d_col_idx, d_values,
+			d_M1, d_M2, n, m, K, only_triangular
+			);
+		cudaDeviceSynchronize();
+
+		// Copy result back
+		cudaMemcpy((void*)h_values, d_values, nnz * sizeof(double), cudaMemcpyDeviceToHost);
+
+		// Free device memory
+		cudaFree(d_row_ptr);
+		cudaFree(d_col_idx);
+		cudaFree(d_values);
+		cudaFree(d_M1);
+		cudaFree(d_M2);
+
+		// Mirror for full matrix if needed
+		if (!only_triangular) {
+			for (int k = 0; k < Sigma.outerSize(); ++k) {
+				for (sp_mat_t::InnerIterator it(Sigma, k); it; ++it) {
+					int i = it.row();
+					int j = it.col();
+					if (i < j) {
+						Sigma.coeffRef(j, i) = Sigma.coeff(i, j);
+					}
+				}
+			}
+		}
+
+		Log::REInfo("[GPU] Subtracted M1^T * M2 from sparse Sigma.");
+		return true;
+	}
+
+	template <class T_mat>
+	void SubtractProdFromMatrix(T_mat& Sigma, const den_mat_t& M1, const den_mat_t& M2, bool only_triangular, bool GPU_use) {
+		if (!GPU_use) {
+			Log::REInfo("[Fallback] Forced Eigen matrix-multiplication.");
+			SubtractProdFromMat<T_mat>(Sigma, M1, M2, true);
+			return;
+		}
+		int device_count = 0;
+		cudaError_t err = cudaGetDeviceCount(&device_count);
+		if (err != cudaSuccess || device_count == 0) {
+			Log::REInfo("[Fallback] No CUDA devices found. Using Eigen for subtract Matrix product.");
+			SubtractProdFromMat<T_mat>(Sigma, M1, M2, true);
+			GPU_use = false;
+			return;
+		}
+
+		if (!try_SubtractProdFromMat_CUDA(Sigma,M1,M2,only_triangular)) {
+			Log::REInfo("[Fallback] Error in computation on GPU. Using Eigen for subtract Matrix product.");
+			SubtractProdFromMat<T_mat>(Sigma, M1, M2, true);
+		}
+	}
+
+#else
+
+template <class T_mat>
+void SubtractProdFromMatrix(T_mat& Sigma, const den_mat_t& M1, const den_mat_t& M2, bool only_triangular, bool GPU_use) {
+	if (GPU_use) {
+		Log::REInfo("[Fallback] Not able to compile CUDA Code. Continuing with CPU support.");
+		GPU_use = false;
+	}
+	SubtractProdFromMat<T_mat>(Sigma, M1, M2, true);
+}
+
+#endif  // USE_CUDA_GP
+
+
 
 	/*!
 	* \brief Cholesky factor of A_input = LL^T
