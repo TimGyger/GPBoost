@@ -652,7 +652,7 @@ namespace GPBoost {
 		dim3 block(16, 16);
 		dim3 grid((m + block.x - 1) / block.x, (n + block.y - 1) / block.y);
 
-		subtract_prod_from_mat_kernel << <grid, block >> > (
+		subtract_prod_from_mat_kernel<<<grid, block>>>(
 			d_M1, d_M2, d_Sigma,
 			k, n, k, m,
 			only_triangular
@@ -706,7 +706,7 @@ namespace GPBoost {
 		// Kernel launch
 		int blockSize = 256;
 		int numBlocks = (n + blockSize - 1) / blockSize;
-		subtract_prod_from_sparse_mat_kernel << <numBlocks, blockSize >> > (
+		subtract_prod_from_sparse_mat_kernel<<<numBlocks, blockSize>>>(
 			d_row_ptr, d_col_idx, d_values,
 			d_M1, d_M2, n, m, K, only_triangular
 			);
