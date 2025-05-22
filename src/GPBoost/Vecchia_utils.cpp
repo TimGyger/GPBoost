@@ -1194,7 +1194,6 @@ namespace GPBoost {
 				sigma_ip_grad_sigma_ip_inv_cross_cov_T_cluster_i = std::vector<den_mat_t>(num_par_gp);
 				//sigma_ip_inv_cross_cov_T_cluster_i = chol_fact_sigma_ip_cluster_i.solve((*sigma_cross_cov).transpose());
 				GPBoost::solve_linear_sys(chol_fact_sigma_ip_cluster_i, (*sigma_cross_cov).transpose(), sigma_ip_inv_cross_cov_T_cluster_i, GPU_use);
-#pragma omp parallel for schedule(static)
 				for (int ipar = 0; ipar < (int)num_par_comp; ++ipar) {
 					sigma_ip_grad[ipar] = *(re_comps_ip_cluster_i[0]->GetZSigmaZtGrad(ipar, true, re_comps_ip_cluster_i[0]->CovPars()[0]));
 					sigma_cross_cov_gradT[ipar] = (*(re_comps_cross_cov_cluster_i[0]->GetZSigmaZtGrad(ipar, true, re_comps_cross_cov_cluster_i[0]->CovPars()[0]))).transpose();
