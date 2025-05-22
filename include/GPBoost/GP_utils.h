@@ -604,20 +604,17 @@ namespace GPBoost {
 
 #ifdef USE_CUDA_GP
 
-
-	__global__ void subtract_prod_from_sparse_mat_kernel(
-		int* row_ptr, int* col_idx, double* values,
-		const double* M1, const double* M2,
-		int n_rows, int n_cols, int K
-	);
-
-	__global__ void subtract_prod_from_mat_kernel(
-		const double* __restrict__ M1,
-		const double* __restrict__ M2,
-		double* Sigma,
+	void launch_subtract_prod_from_mat_kernel(
+		const double* M1, const double* M2, double* Sigma,
 		int M1_rows, int M1_cols,
 		int M2_rows, int M2_cols,
 		bool only_triangular);
+
+	void launch_subtract_sparse_kernel(
+		const int* row_ptr, const int* col_idx, double* values,
+		const double* M1, const double* M2,
+		int n, int m, int K, bool only_triangular);
+
 
 	// Host function
 	template <class T_mat, typename std::enable_if <std::is_same<den_mat_t, T_mat>::value>::type* = nullptr >
@@ -652,7 +649,7 @@ namespace GPBoost {
 		dim3 block(16, 16);
 		dim3 grid((m + block.x - 1) / block.x, (n + block.y - 1) / block.y);
 
-		subtract_prod_from_mat_kernel<<<grid, block>>>(
+		launch_subtract_prod_from_mat_kernel (
 			d_M1, d_M2, d_Sigma,
 			k, n, k, m,
 			only_triangular
@@ -706,7 +703,7 @@ namespace GPBoost {
 		// Kernel launch
 		int blockSize = 256;
 		int numBlocks = (n + blockSize - 1) / blockSize;
-		subtract_prod_from_sparse_mat_kernel<<<numBlocks, blockSize>>>(
+		launch_subtract_sparse_kernel(
 			d_row_ptr, d_col_idx, d_values,
 			d_M1, d_M2, n, m, K, only_triangular
 			);

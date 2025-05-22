@@ -448,6 +448,38 @@ namespace GPBoost {
         }
     }
 
+    void launch_subtract_sparse_kernel(
+        const int* row_ptr, const int* col_idx, double* values,
+        const double* M1, const double* M2,
+        int n, int m, int K, bool only_triangular)
+    {
+        int blockSize = 256;
+        int numBlocks = (n + blockSize - 1) / blockSize;
+        subtract_prod_from_sparse_mat_kernel << <numBlocks, blockSize >> > (
+            row_ptr, col_idx, values, M1, M2, n, m, K, only_triangular
+            );
+        cudaDeviceSynchronize();
+    }
+
+    void launch_subtract_prod_from_mat_kernel(
+        const double* M1, const double* M2, double* Sigma,
+        int M1_rows, int M1_cols,
+        int M2_rows, int M2_cols,
+        bool only_triangular)
+    {
+        dim3 blockDim(16, 16);
+        dim3 gridDim((M2_cols + blockDim.x - 1) / blockDim.x,
+            (M1_cols + blockDim.y - 1) / blockDim.y);
+
+        subtract_prod_from_mat_kernel << <gridDim, blockDim >> > (
+            M1, M2, Sigma,
+            M1_rows, M1_cols,
+            M2_rows, M2_cols,
+            only_triangular
+            );
+        cudaDeviceSynchronize();
+    }
+
     /*
     bool cholesky_cusolver_to_eigen(chol_den_mat_t& llt, const den_mat_t& A_input) {
         int N = A_input.rows();
