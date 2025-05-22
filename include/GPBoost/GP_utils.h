@@ -646,9 +646,6 @@ namespace GPBoost {
 		cudaMemcpy(d_M2, M2.data(), size_M2, cudaMemcpyHostToDevice);
 		cudaMemcpy(d_Sigma, Sigma.data(), size_Sigma, cudaMemcpyHostToDevice);
 
-		dim3 block(16, 16);
-		dim3 grid((m + block.x - 1) / block.x, (n + block.y - 1) / block.y);
-
 		launch_subtract_prod_from_mat_kernel (
 			d_M1, d_M2, d_Sigma,
 			k, n, k, m,
@@ -701,8 +698,6 @@ namespace GPBoost {
 		cudaMemcpy(d_M2, M2.data(), K * m * sizeof(double), cudaMemcpyHostToDevice);
 
 		// Kernel launch
-		int blockSize = 256;
-		int numBlocks = (n + blockSize - 1) / blockSize;
 		launch_subtract_sparse_kernel(
 			d_row_ptr, d_col_idx, d_values,
 			d_M1, d_M2, n, m, K, only_triangular
@@ -722,7 +717,7 @@ namespace GPBoost {
 		// Mirror for full matrix if needed
 		if (!only_triangular) {
 			for (int k = 0; k < Sigma.outerSize(); ++k) {
-				for (sp_mat_t::InnerIterator it(Sigma, k); it; ++it) {
+				for (T_mat::InnerIterator it(Sigma, k); it; ++it) {
 					int i = it.row();
 					int j = it.col();
 					if (i < j) {

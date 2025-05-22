@@ -425,7 +425,7 @@ namespace GPBoost {
     }
 
     __global__ void subtract_prod_from_sparse_mat_kernel(
-        int* row_ptr, int* col_idx, double* values,
+        const int* row_ptr, const int* col_idx, double* values,
         const double* M1, const double* M2,
         int n_rows, int n_cols, int K
     ) {
