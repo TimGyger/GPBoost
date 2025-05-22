@@ -717,7 +717,7 @@ namespace GPBoost {
 		// Mirror for full matrix if needed
 		if (!only_triangular) {
 			for (int k = 0; k < Sigma.outerSize(); ++k) {
-				for (T_mat::InnerIterator it(Sigma, k); it; ++it) {
+				for (typename T_mat::InnerIterator it(Sigma, k); it; ++it) {
 					int i = it.row();
 					int j = it.col();
 					if (i < j) {
