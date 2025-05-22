@@ -1805,7 +1805,7 @@ namespace GPBoost {
 						den_mat_t sigma_ip_inv_sigma_cross_cov;
 						GPBoost::solve_linear_sys(chol_fact_sigma_ip_[cluster_i][0], (*cross_cov).transpose(), sigma_ip_inv_sigma_cross_cov, GPU_use_);
 						// Subtract gradient of predictive process covariance
-						den_mat_t sigma_ip_stable_grad_sigma_ip_inv_sigma_cross_cov = sigma_ip_stable_grad* sigma_ip_inv_sigma_cross_cov;
+						den_mat_t sigma_ip_stable_grad_sigma_ip_inv_sigma_cross_cov;// = sigma_ip_stable_grad * sigma_ip_inv_sigma_cross_cov;
 						GPBoost::matmul(sigma_ip_stable_grad, sigma_ip_inv_sigma_cross_cov, sigma_ip_stable_grad_sigma_ip_inv_sigma_cross_cov, GPU_use_);
 						//SubtractProdFromMat<T_mat>(*sigma_resid_grad, -sigma_ip_inv_sigma_cross_cov, sigma_ip_stable_grad * sigma_ip_inv_sigma_cross_cov, true);
 						begin1 = std::chrono::steady_clock::now();//only for debugging

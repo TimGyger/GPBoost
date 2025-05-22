@@ -716,6 +716,7 @@ namespace GPBoost {
 
 		// Mirror for full matrix if needed
 		if (!only_triangular) {
+#pragma omp parallel for schedule(static)
 			for (int k = 0; k < Sigma.outerSize(); ++k) {
 				for (typename T_mat::InnerIterator it(Sigma, k); it; ++it) {
 					int i = it.row();
