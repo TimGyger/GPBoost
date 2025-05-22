@@ -440,7 +440,7 @@ namespace GPBoost {
             if (row <= col) {
                 double dot = 0.0;
                 for (int k = 0; k < K; ++k)
-                    dot += M1[row * n_rows + k] * M2[col * n_rows + k];
+                    dot += M1[row * K + k] * M2[col * K + k];
 
                 atomicAdd(&values[idx], -dot);
             }
