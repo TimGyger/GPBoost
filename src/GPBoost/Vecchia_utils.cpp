@@ -1198,7 +1198,7 @@ namespace GPBoost {
 					sigma_ip_grad[ipar] = *(re_comps_ip_cluster_i[0]->GetZSigmaZtGrad(ipar, true, re_comps_ip_cluster_i[0]->CovPars()[0]));
 					sigma_cross_cov_gradT[ipar] = (*(re_comps_cross_cov_cluster_i[0]->GetZSigmaZtGrad(ipar, true, re_comps_cross_cov_cluster_i[0]->CovPars()[0]))).transpose();
 					//sigma_ip_grad_sigma_ip_inv_cross_cov_T_cluster_i[ipar] = sigma_ip_grad[ipar] * sigma_ip_inv_cross_cov_T_cluster_i;
-					GPBoost::matmul(sigma_ip_grad_sigma_ip_inv_cross_cov_T_cluster_i[ipar], sigma_ip_grad[ipar], sigma_ip_inv_cross_cov_T_cluster_i, GPU_use);
+					GPBoost::matmul(sigma_ip_grad[ipar], sigma_ip_inv_cross_cov_T_cluster_i, sigma_ip_grad_sigma_ip_inv_cross_cov_T_cluster_i[ipar], GPU_use);
 				}
 			}
 		}
