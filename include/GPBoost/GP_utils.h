@@ -604,6 +604,21 @@ namespace GPBoost {
 
 #ifdef USE_CUDA_GP
 
+
+	__global__ void subtract_prod_from_sparse_mat_kernel(
+		int* row_ptr, int* col_idx, double* values,
+		const double* M1, const double* M2,
+		int n_rows, int n_cols, int K
+	);
+
+	__global__ void subtract_prod_from_mat_kernel(
+		const double* __restrict__ M1,
+		const double* __restrict__ M2,
+		double* Sigma,
+		int M1_rows, int M1_cols,
+		int M2_rows, int M2_cols,
+		bool only_triangular);
+
 	// Host function
 	template <class T_mat, typename std::enable_if <std::is_same<den_mat_t, T_mat>::value>::type* = nullptr >
 	bool try_SubtractProdFromMat_CUDA(T_mat& Sigma,
