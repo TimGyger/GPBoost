@@ -1151,7 +1151,8 @@ namespace GPBoost {
 		int ind_intercept_gp,
 		bool gauss_likelihood,
 		bool save_distances_isotropic_cov_fct,
-		string_t& gp_approx) {
+		string_t& gp_approx,
+		bool GPU_use) {
 		int num_par_comp = re_comps_vecchia_cluster_i[ind_intercept_gp]->NumCovPar();
 		int num_par_gp = num_par_comp * num_gp_total + calc_gradient_nugget;
 		//Initialize matrices B = I - A and D^-1 as well as their derivatives (in order that the code below can be run in parallel)
@@ -1191,12 +1192,14 @@ namespace GPBoost {
 			const den_mat_t* sigma_cross_cov = re_comps_cross_cov_cluster_i[0]->GetSigmaPtr();
 			if (calc_gradient) {
 				sigma_ip_grad_sigma_ip_inv_cross_cov_T_cluster_i = std::vector<den_mat_t>(num_par_gp);
-				sigma_ip_inv_cross_cov_T_cluster_i = chol_fact_sigma_ip_cluster_i.solve((*sigma_cross_cov).transpose());
+				//sigma_ip_inv_cross_cov_T_cluster_i = chol_fact_sigma_ip_cluster_i.solve((*sigma_cross_cov).transpose());
+				GPBoost::solve_linear_sys(chol_fact_sigma_ip_cluster_i, (*sigma_cross_cov).transpose(), sigma_ip_inv_cross_cov_T_cluster_i, GPU_use);
 #pragma omp parallel for schedule(static)
 				for (int ipar = 0; ipar < (int)num_par_comp; ++ipar) {
 					sigma_ip_grad[ipar] = *(re_comps_ip_cluster_i[0]->GetZSigmaZtGrad(ipar, true, re_comps_ip_cluster_i[0]->CovPars()[0]));
 					sigma_cross_cov_gradT[ipar] = (*(re_comps_cross_cov_cluster_i[0]->GetZSigmaZtGrad(ipar, true, re_comps_cross_cov_cluster_i[0]->CovPars()[0]))).transpose();
-					sigma_ip_grad_sigma_ip_inv_cross_cov_T_cluster_i[ipar] = sigma_ip_grad[ipar] * sigma_ip_inv_cross_cov_T_cluster_i;
+					//sigma_ip_grad_sigma_ip_inv_cross_cov_T_cluster_i[ipar] = sigma_ip_grad[ipar] * sigma_ip_inv_cross_cov_T_cluster_i;
+					GPBoost::matmul(sigma_ip_grad_sigma_ip_inv_cross_cov_T_cluster_i[ipar], sigma_ip_grad[ipar], sigma_ip_inv_cross_cov_T_cluster_i, GPU_use);
 				}
 			}
 		}

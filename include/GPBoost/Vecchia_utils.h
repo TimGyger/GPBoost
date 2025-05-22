@@ -329,7 +329,8 @@ namespace GPBoost {
 		int ind_intercept_gp,
 		bool gauss_likelihood,
 		bool save_distances_isotropic_cov_fct,
-		string_t& gp_approx);
+		string_t& gp_approx,
+		bool GPU_use);
 
 	/*!
 	* \brief Calculate predictions (conditional mean and covariance matrix) using the Vecchia approximation for the covariance matrix of the observable process when observed locations appear first in the ordering
