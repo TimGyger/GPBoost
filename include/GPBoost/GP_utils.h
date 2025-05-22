@@ -664,7 +664,7 @@ namespace GPBoost {
 		Log::REInfo("[GPU] Subtract product with cuBLAS.");
 		return true;
 	}
-	template <class T_mat, typename std::enable_if <std::is_same<sp_mat_t, T_mat>::value || std::is_same<sp_mat_rm_t, T_mat>::value>::type* = nullptr
+	template <class T_mat, typename std::enable_if <std::is_same<sp_mat_t, T_mat>::value || std::is_same<sp_mat_rm_t, T_mat>::value>::type* = nullptr>
 	bool try_SubtractProdFromMat_CUDA(T_mat & Sigma,
 			const den_mat_t & M1,
 			const den_mat_t & M2,
