@@ -36,7 +36,7 @@
 #include <GPBoost/sparse_matrix_utils.h>
 #include <GPBoost/DF_utils.h>
 #include <GPBoost/utils.h>
-#include <GPBoost/CG_utils.h>F
+#include <GPBoost/CG_utils.h>
 #include <GPBoost/GP_utils.h>
 
 #include <string>
