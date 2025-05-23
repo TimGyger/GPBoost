@@ -36,12 +36,14 @@
 #include <GPBoost/sparse_matrix_utils.h>
 #include <GPBoost/DF_utils.h>
 #include <GPBoost/utils.h>
-#include <GPBoost/CG_utils.h>
+#include <GPBoost/CG_utils.h>F
 #include <GPBoost/GP_utils.h>
 
 #include <string>
 #include <set>
 #include <vector>
+#include <chrono>  // only for debugging
+#include <thread> // only for debugging
 
 #include <LightGBM/utils/log.h>
 using LightGBM::Log;
@@ -2839,6 +2841,10 @@ namespace GPBoost {
 					}
 				}
 			}
+			Log::REInfo("start");//only for debugging
+			std::chrono::steady_clock::time_point begin, end;//only for debugging
+			double el_time;//only for debugging
+			begin = std::chrono::steady_clock::now();//only for debugging
 			for (it = 0; it < maxit_mode_newton_; ++it) {
 				// Calculate first and second derivative of log-likelihood
 				CalcFirstDerivLogLik(y_data, y_data_int, location_par_ptr);
@@ -3029,6 +3035,9 @@ namespace GPBoost {
 					break;
 				}
 			} // end loop for mode finding
+			end = std::chrono::steady_clock::now();//only for debugging
+			el_time = (double)(std::chrono::duration_cast<std::chrono::microseconds>(end - begin).count()) / 1000000.;//only for debugging
+			Log::REInfo("Mode time until = %g ", el_time);
 			if (!has_NA_or_Inf) {//calculate determinant
 				mode_has_been_calculated_ = true;
 				mode_is_zero_ = false;
@@ -3152,6 +3161,9 @@ namespace GPBoost {
 					approx_marginal_ll -= ((den_mat_t)chol_fact_sigma_woodbury_woodbury_.matrixL()).diagonal().array().log().sum();
 				}
 			}
+			end = std::chrono::steady_clock::now();//only for debugging
+			el_time = (double)(std::chrono::duration_cast<std::chrono::microseconds>(end - begin).count()) / 1000000.;//only for debugging
+			Log::REInfo("Mode2 time until = %g ", el_time);
 			//Log::REInfo("FindModePostRandEffCalcMLLFSVA: finished after %d iterations, mode_[0:2] = %g, %g, %g ", it, mode_[0], mode_[1], mode_[2]);//for debugging
 		}//end FindModePostRandEffCalcMLLFSVA
 
@@ -4378,6 +4390,10 @@ namespace GPBoost {
 			vec_t W_D_inv = information_ll_ + D_inv_rm_.diagonal();
 			vec_t W_D_inv_inv = W_D_inv.cwiseInverse();
 			vec_t d_mll_d_mode;
+			Log::REInfo("start");//only for debugging
+			std::chrono::steady_clock::time_point begin, end;//only for debugging
+			double el_time;//only for debugging
+			begin = std::chrono::steady_clock::now();//only for debugging
 			if (matrix_inversion_method_ == "iterative") {
 				double c_opt;
 				sp_mat_rm_t SigmaI_rm = B_t_D_inv_rm_ * B_rm_;
@@ -4405,6 +4421,9 @@ namespace GPBoost {
 					den_mat_t cross_co_chol_cross_cov_P_diag_inv_rand_vect;
 					GPBoost::matmul(diagonal_approx_inv_preconditioner_.asDiagonal() * (*cross_cov_preconditioner), chol_cross_cov_P_diag_inv_rand_vect, cross_co_chol_cross_cov_P_diag_inv_rand_vect, GPU_use);
 					PI_Z = P_diag_inv_rand_vect - cross_co_chol_cross_cov_P_diag_inv_rand_vect;
+					end = std::chrono::steady_clock::now();//only for debugging
+					el_time = (double)(std::chrono::duration_cast<std::chrono::microseconds>(end - begin).count()) / 1000000.;//only for debugging
+					Log::REInfo("Grad1 time until = %g ", el_time);
 					den_mat_t WI_PI_Z = diag_WI.asDiagonal() * PI_Z;
 					if (grad_information_wrt_mode_non_zero_) {
 						Z_SigmaI_plus_W_inv_W_deriv_PI_Z = -1 * (WI_SigmaI_plus_W_inv_Z.array() * W_deriv_rep.array() * WI_PI_Z.array()).matrix();
@@ -4432,6 +4451,9 @@ namespace GPBoost {
 						CalcOptimalCVectorized(Z_SigmaI_plus_W_inv_W_deriv_PI_Z, Z_PI_P_deriv_PI_Z, tr_SigmaI_plus_W_inv_W_deriv, tr_PI_P_deriv_vec, c_opt_vec);
 						d_log_det_Sigma_W_plus_I_d_mode += c_opt_vec.cwiseProduct(tr_PI_P_deriv_vec - tr_PI_inv_W_deriv);
 					}
+					end = std::chrono::steady_clock::now();//only for debugging
+					el_time = (double)(std::chrono::duration_cast<std::chrono::microseconds>(end - begin).count()) / 1000000.;//only for debugging
+					Log::REInfo("Grad2 time until = %g ", el_time);
 					//For implicit derivatives: calculate (Sigma^(-1) + W)^(-1) d_mll_d_mode
 					bool has_NA_or_Inf = false;
 					if (grad_information_wrt_mode_non_zero_) {
@@ -4461,6 +4483,9 @@ namespace GPBoost {
 						//den_mat_t sigma_ip_inv_cross_cov_PI_Z = sigma_ip_inv_cross_cov_T_cluster_i * PI_Z;
 						den_mat_t sigma_ip_inv_cross_cov_PI_Z;
 						GPBoost::matmul(sigma_ip_inv_cross_cov_T_cluster_i, PI_Z, sigma_ip_inv_cross_cov_PI_Z, GPU_use);
+						end = std::chrono::steady_clock::now();//only for debugging
+						el_time = (double)(std::chrono::duration_cast<std::chrono::microseconds>(end - begin).count()) / 1000000.;//only for debugging
+						Log::REInfo("Grad3 time until = %g ", el_time);
 						for (int j = 0; j < (int)re_comps_ip_cluster_i.size(); ++j) {
 							for (int ipar = 0; ipar < num_par; ++ipar) {
 								std::shared_ptr<den_mat_t> cross_cov_grad = re_comps_cross_cov_cluster_i[j]->GetZSigmaZtGrad(ipar, true, 0.);
@@ -4520,6 +4545,9 @@ namespace GPBoost {
 								//den_mat_t P_grad_PI_Z = (*cross_cov_preconditioner_grad) * sigma_ip_inv_cross_cov_preconditioner_PI_Z +
 								//	sigma_ip_inv_sigma_cross_cov_preconditioner.transpose() * ((*cross_cov_preconditioner_grad).transpose() * PI_Z) -
 								//	sigma_ip_inv_sigma_cross_cov_preconditioner.transpose() * (sigma_ip_preconditioner_grad * sigma_ip_inv_cross_cov_preconditioner_PI_Z);
+								end = std::chrono::steady_clock::now();//only for debugging
+								el_time = (double)(std::chrono::duration_cast<std::chrono::microseconds>(end - begin).count()) / 1000000.;//only for debugging
+								Log::REInfo("Grad4 time until = %g ", el_time);
 								den_mat_t P_grad_PI_Z_1;
 								GPBoost::matmul((*cross_cov_preconditioner_grad), sigma_ip_inv_cross_cov_preconditioner_PI_Z, P_grad_PI_Z_1, GPU_use);
 								den_mat_t P_grad_PI_Z_2;
@@ -4531,7 +4559,9 @@ namespace GPBoost {
 								den_mat_t P_grad_PI_Z_5;
 								GPBoost::matmul(sigma_ip_inv_sigma_cross_cov_preconditioner.transpose(), P_grad_PI_Z_4, P_grad_PI_Z_5, GPU_use);
 								den_mat_t P_grad_PI_Z = P_grad_PI_Z_1 + P_grad_PI_Z_3 - P_grad_PI_Z_5;
-
+								end = std::chrono::steady_clock::now();//only for debugging
+								el_time = (double)(std::chrono::duration_cast<std::chrono::microseconds>(end - begin).count()) / 1000000.;//only for debugging
+								Log::REInfo("Grad5 time until = %g ", el_time);
 								vec_t diagonal_approx_preconditioner_grad_ = vec_t::Zero(dim_mode_);
 								diagonal_approx_preconditioner_grad_.array() += sigma_ip_preconditioner_grad.coeffRef(0, 0);
 								//den_mat_t sigma_ip_grad_inv_sigma_cross_cov_preconditioner = sigma_ip_preconditioner_grad * sigma_ip_inv_sigma_cross_cov_preconditioner;
@@ -4575,6 +4605,9 @@ namespace GPBoost {
 								if (grad_information_wrt_mode_non_zero_) {
 									cov_grad[ipar] -= SigmaI_plus_W_inv_d_mll_d_mode.dot(SigmaI_deriv_mode);
 								}
+								end = std::chrono::steady_clock::now();//only for debugging
+								el_time = (double)(std::chrono::duration_cast<std::chrono::microseconds>(end - begin).count()) / 1000000.;//only for debugging
+								Log::REInfo("Grad6 time until = %g ", el_time);
 								//Log::REInfo("SigmaI_plus_W_inv_d_mll_d_mode %g", SigmaI_plus_W_inv_d_mll_d_mode.dot(SigmaI_deriv_mode));
 							}
 						}
