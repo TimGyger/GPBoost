@@ -566,7 +566,7 @@ namespace GPBoost {
 	*/
 	void matmul(const den_mat_t& A, const den_mat_t& B, den_mat_t& C, bool GPU_use);
 
-	void matmul_f(const den_mat_t& A, const den_mat_t& B, den_mat_t& C, bool GPU_use);
+	void matmul_f(const Eigen::MatrixXf& A, const Eigen::MatrixXf& B, den_mat_t& C, bool GPU_use);
 
 	/*!
 	* \brief Matrix-multiplication D * B = C

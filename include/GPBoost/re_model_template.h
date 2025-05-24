@@ -8230,7 +8230,7 @@ namespace GPBoost {
 						Log::REInfo("MM time until = %g ", el_time);
 
 						begin = std::chrono::steady_clock::now();//only for debugging
-						GPBoost::matmul_f((*cross_cov).transpose(), D_cross_cov, sigma_woodbury, GPU_use_);
+						GPBoost::matmul_f(((*cross_cov).transpose()).cast<float>(), D_cross_cov.cast<float>(), sigma_woodbury, GPU_use_);
 						end = std::chrono::steady_clock::now();//only for debugging
 						el_time = (double)(std::chrono::duration_cast<std::chrono::microseconds>(end - begin).count()) / 1000000.;//only for debugging
 						Log::REInfo("MM f time until = %g ", el_time);

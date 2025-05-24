@@ -97,29 +97,19 @@ namespace GPBoost {
         return true;
     }
 
-    bool try_matmul_gpu_float(const den_mat_t& A, const den_mat_t& B, den_mat_t& C) {
+    bool try_matmul_gpu_float(const Eigen::MatrixXf& A, const Eigen::MatrixXf& B, den_mat_t& C) {
         int M = A.rows(), K = A.cols(), N = B.cols();
         if (K != B.rows()) {
             Log::REInfo("[GPU] Dimension mismatch.");
             return false;
         }
 
-        C.resize(M, N);
+        C.resize(M, N); // Output is double
 
-        // Allocate and convert input matrices to float
-        Log::REInfo("start");//only for debugging
-        std::chrono::steady_clock::time_point begin, end;//only for debugging
-        double el_time;//only for debugging
-        begin = std::chrono::steady_clock::now();//only for debugging
-        std::vector<float> A_f(M * K), B_f(K * N);
-#pragma omp parallel for schedule(static)   
-        for (int i = 0; i < M * K; ++i) A_f[i] = static_cast<float>(A.data()[i]);
-#pragma omp parallel for schedule(static)   
-        for (int i = 0; i < K * N; ++i) B_f[i] = static_cast<float>(B.data()[i]);
-        end = std::chrono::steady_clock::now();//only for debugging
-        el_time = (double)(std::chrono::duration_cast<std::chrono::microseconds>(end - begin).count()) / 1000000.;//only for debugging
-        Log::REInfo("To Float until = %g ", el_time);
-        std::vector<float> C_f(M * N, 0.0f); // output in float
+        const float* h_A = A.data();
+        const float* h_B = B.data();
+
+        std::vector<float> C_f(M * N, 0.0f); // Temporary float result
 
         float* d_A = nullptr, * d_B = nullptr, * d_C = nullptr;
         cudaError_t cuda_stat;
@@ -143,8 +133,8 @@ namespace GPBoost {
             return false;
         }
 
-        cudaMemcpy(d_A, A_f.data(), size_A, cudaMemcpyHostToDevice);
-        cudaMemcpy(d_B, B_f.data(), size_B, cudaMemcpyHostToDevice);
+        cudaMemcpy(d_A, h_A, size_A, cudaMemcpyHostToDevice);
+        cudaMemcpy(d_B, h_B, size_B, cudaMemcpyHostToDevice);
 
         stat = cublasCreate(&handle);
         if (stat != CUBLAS_STATUS_SUCCESS) {
@@ -172,19 +162,16 @@ namespace GPBoost {
 
         cudaMemcpy(C_f.data(), d_C, size_C, cudaMemcpyDeviceToHost);
 
-        // Convert result back to double
-        begin = std::chrono::steady_clock::now();//only for debugging
+        // Convert float result to double in-place into C
 #pragma omp parallel for schedule(static) 
         for (int i = 0; i < M * N; ++i) {
             C.data()[i] = static_cast<double>(C_f[i]);
         }
-        end = std::chrono::steady_clock::now();//only for debugging
-        el_time = (double)(std::chrono::duration_cast<std::chrono::microseconds>(end - begin).count()) / 1000000.;//only for debugging
-        Log::REInfo("To Double until = %g ", el_time);
+
         cublasDestroy(handle);
         cudaFree(d_A); cudaFree(d_B); cudaFree(d_C);
 
-        Log::REInfo("[GPU] Matrix multiplication completed with cuBLAS (float).");
+        Log::REInfo("[GPU] Matrix multiplication completed with cuBLAS (float input, double output).");
         return true;
     }
 

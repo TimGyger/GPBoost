@@ -401,12 +401,12 @@ namespace GPBoost {
 		C = A * B;
 	}
 
-	void matmul_f(const den_mat_t& A, const den_mat_t& B, den_mat_t& C, bool GPU_use) {
+	void matmul_f(const Eigen::MatrixXf& A, const Eigen::MatrixXf& B, den_mat_t& C, bool GPU_use) {
 		if (GPU_use) {
 			Log::REInfo("[Fallback] Not able to compile CUDA Code. Continuing with CPU support.");
 			GPU_use = false;
 		}
-		C = A * B;
+		C = A.cast<double>() * B.cast<double>();
 	}
 
 	void sparse_dense_matmul(const sp_mat_rm_t& A, const den_mat_t& B, den_mat_t& C, bool GPU_use) {
@@ -478,26 +478,26 @@ namespace GPBoost {
 		}
 	}
 
-	bool try_matmul_gpu_float(const den_mat_t& A, const den_mat_t& B, den_mat_t& C);
+	bool try_matmul_gpu_float(const Eigen::MatrixXf& A, const Eigen::MatrixXf& B, den_mat_t& C);
 
-	void matmul_f(const den_mat_t& A, const den_mat_t& B, den_mat_t& C, bool GPU_use) {
+	void matmul_f(const Eigen::MatrixXf& A, const Eigen::MatrixXf& B, den_mat_t& C, bool GPU_use) {
 		if (!GPU_use) {
 			Log::REInfo("[Fallback] Forced Eigen matrix-multiplication.");
-			C = A * B;
+			C = A.cast<double>() * B.cast<double>();
 			return;
 		}
 		int device_count = 0;
 		cudaError_t err = cudaGetDeviceCount(&device_count);
 		if (err != cudaSuccess || device_count == 0) {
 			Log::REInfo("[Fallback] No CUDA devices found. Using Eigen for matrix-multiplication.");
-			C = A * B;
+			C = A.cast<double>() * B.cast<double>();
 			GPU_use = false;
 			return;
 		}
 
 		if (!try_matmul_gpu_float(A, B, C)) {
 			Log::REInfo("[Fallback] Error in computation on GPU. Using Eigen for matrix-multiplication.");
-			C = A * B;
+			C = A.cast<double>() * B.cast<double>();
 		}
 	}
 
