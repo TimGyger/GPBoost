@@ -95,6 +95,85 @@ namespace GPBoost {
         return true;
     }
 
+    bool try_matmul_gpu_float(const den_mat_t& A, const den_mat_t& B, den_mat_t& C) {
+        int M = A.rows(), K = A.cols(), N = B.cols();
+        if (K != B.rows()) {
+            Log::REInfo("[GPU] Dimension mismatch.");
+            return false;
+        }
+
+        C.resize(M, N);
+
+        // Allocate and convert input matrices to float
+        std::vector<float> A_f(M * K), B_f(K * N);
+        for (int i = 0; i < M * K; ++i) A_f[i] = static_cast<float>(A.data()[i]);
+        for (int i = 0; i < K * N; ++i) B_f[i] = static_cast<float>(B.data()[i]);
+
+        std::vector<float> C_f(M * N, 0.0f); // output in float
+
+        float* d_A = nullptr, * d_B = nullptr, * d_C = nullptr;
+        cudaError_t cuda_stat;
+        cublasStatus_t stat;
+        cublasHandle_t handle;
+
+        size_t size_A = M * K * sizeof(float);
+        size_t size_B = K * N * sizeof(float);
+        size_t size_C = M * N * sizeof(float);
+
+        cuda_stat = cudaMalloc((void**)&d_A, size_A);
+        if (cuda_stat != cudaSuccess) return false;
+        cuda_stat = cudaMalloc((void**)&d_B, size_B);
+        if (cuda_stat != cudaSuccess) {
+            cudaFree(d_A);
+            return false;
+        }
+        cuda_stat = cudaMalloc((void**)&d_C, size_C);
+        if (cuda_stat != cudaSuccess) {
+            cudaFree(d_A); cudaFree(d_B);
+            return false;
+        }
+
+        cudaMemcpy(d_A, A_f.data(), size_A, cudaMemcpyHostToDevice);
+        cudaMemcpy(d_B, B_f.data(), size_B, cudaMemcpyHostToDevice);
+
+        stat = cublasCreate(&handle);
+        if (stat != CUBLAS_STATUS_SUCCESS) {
+            cudaFree(d_A); cudaFree(d_B); cudaFree(d_C);
+            return false;
+        }
+
+        const float alpha = 1.0f;
+        const float beta = 0.0f;
+
+        stat = cublasSgemm(handle,
+            CUBLAS_OP_N, CUBLAS_OP_N,
+            M, N, K,
+            &alpha,
+            d_A, M,
+            d_B, K,
+            &beta,
+            d_C, M);
+
+        if (stat != CUBLAS_STATUS_SUCCESS) {
+            cublasDestroy(handle);
+            cudaFree(d_A); cudaFree(d_B); cudaFree(d_C);
+            return false;
+        }
+
+        cudaMemcpy(C_f.data(), d_C, size_C, cudaMemcpyDeviceToHost);
+
+        // Convert result back to double
+        for (int i = 0; i < M * N; ++i) {
+            C.data()[i] = static_cast<double>(C_f[i]);
+        }
+
+        cublasDestroy(handle);
+        cudaFree(d_A); cudaFree(d_B); cudaFree(d_C);
+
+        Log::REInfo("[GPU] Matrix multiplication completed with cuBLAS (float).");
+        return true;
+    }
+
     bool try_diag_times_dense_gpu(const vec_t& D, const den_mat_t& B, den_mat_t& C) {
         int M = B.rows();
         int N = B.cols();
