@@ -123,6 +123,12 @@ namespace GPBoost {
 				Log::REInfo("Use GPU");
 				seed = 1;
 			}
+			else if (seed == 4) {
+				GPU_use_float = true;
+				GPU_use_ = true;
+				Log::REInfo("Use GPU");
+				seed = 1;
+			}
 			//Initialize RNG
 			CHECK(seed >= 0);
 			rng_ = RNG_t(seed);
@@ -1921,7 +1927,12 @@ namespace GPBoost {
 						GPBoost::solve_linear_sys(chol_fact_sigma_ip_[cluster_i][0], (*cross_cov).transpose(), sigma_ip_inv_sigma_cross_cov, GPU_use_);
 						//den_mat_t sigma_ip_grad_inv_sigma_cross_cov = sigma_ip_stable_grad * sigma_ip_inv_sigma_cross_cov;
 						den_mat_t sigma_ip_grad_inv_sigma_cross_cov;
-						GPBoost::matmul(sigma_ip_stable_grad, sigma_ip_inv_sigma_cross_cov, sigma_ip_grad_inv_sigma_cross_cov, GPU_use_);
+						if (!GPU_use_float) {
+							GPBoost::matmul(sigma_ip_stable_grad, sigma_ip_inv_sigma_cross_cov, sigma_ip_grad_inv_sigma_cross_cov, GPU_use_);
+						}
+						else {
+							GPBoost::matmul_f(sigma_ip_stable_grad.cast<float>(), sigma_ip_inv_sigma_cross_cov.cast<float>(), sigma_ip_grad_inv_sigma_cross_cov, GPU_use_);
+						}
 #pragma omp parallel for schedule(static)
 						for (int ii = 0; ii < num_data_per_cluster_[cluster_i]; ++ii) {
 							FITC_Diag_grad[ii] -= 2 * sigma_ip_inv_sigma_cross_cov.col(ii).dot((*cross_cov_grad).transpose().col(ii))
@@ -1935,14 +1946,24 @@ namespace GPBoost {
 						vec_t fitc_resid_diag_I = fitc_resid_diag_[cluster_i].cwiseInverse();
 						//cross_cov_grad_sigma_resid_inv_cross_cov_T = (*cross_cov).transpose() * fitc_resid_diag_I.asDiagonal() * (*cross_cov_grad);
 						den_mat_t D_cross_cov_grad = fitc_resid_diag_I.asDiagonal() * (*cross_cov_grad);
-						GPBoost::matmul((*cross_cov).transpose(), D_cross_cov_grad, cross_cov_grad_sigma_resid_inv_cross_cov_T, GPU_use_);
+						if (!GPU_use_float) {
+							GPBoost::matmul((*cross_cov).transpose(), D_cross_cov_grad, cross_cov_grad_sigma_resid_inv_cross_cov_T, GPU_use_);
+						}
+						else {
+							GPBoost::matmul_f(((*cross_cov).transpose()).cast<float>(), D_cross_cov_grad.cast<float>(), cross_cov_grad_sigma_resid_inv_cross_cov_T, GPU_use_);
+						}
 						sigma_woodbury_grad = cross_cov_grad_sigma_resid_inv_cross_cov_T + cross_cov_grad_sigma_resid_inv_cross_cov_T.transpose();
 						fitc_resid_diag_I.array() *= fitc_resid_diag_I.array();
 						fitc_resid_diag_I.array() *= FITC_Diag_grad.array();
 						//sigma_woodbury_grad -= (*cross_cov).transpose() * fitc_resid_diag_I.asDiagonal() * (*cross_cov);
 						den_mat_t D_cross_cov = fitc_resid_diag_I.asDiagonal() * (*cross_cov);
 						den_mat_t cross_cov_D_cross_cov;
-						GPBoost::matmul((*cross_cov).transpose(), D_cross_cov, cross_cov_D_cross_cov, GPU_use_);
+						if (!GPU_use_float) {
+							GPBoost::matmul((*cross_cov).transpose(), D_cross_cov, cross_cov_D_cross_cov, GPU_use_);
+						}
+						else {
+							GPBoost::matmul_f(((*cross_cov).transpose()).cast<float>(), D_cross_cov.cast<float>(), cross_cov_D_cross_cov, GPU_use_);
+						}
 						sigma_woodbury_grad -= cross_cov_D_cross_cov;
 					}
 					// sigma_woodbury^-1 * sigma_woodbury_grad
@@ -5268,6 +5289,7 @@ namespace GPBoost {
 
 		/*! Use GPU */
 		bool GPU_use_ = false;
+		bool GPU_use_float = false;
 
 		/*! \brief Nesterov schedule */
 		static double NesterovSchedule(int iter,
@@ -8224,16 +8246,19 @@ namespace GPBoost {
 						end = std::chrono::steady_clock::now();//only for debugging
 						el_time = (double)(std::chrono::duration_cast<std::chrono::microseconds>(end - begin).count()) / 1000000.;//only for debugging
 						Log::REInfo("DM time until = %g ", el_time);
-						GPBoost::matmul((*cross_cov).transpose(), D_cross_cov, sigma_woodbury, GPU_use_);
-						end = std::chrono::steady_clock::now();//only for debugging
-						el_time = (double)(std::chrono::duration_cast<std::chrono::microseconds>(end - begin).count()) / 1000000.;//only for debugging
-						Log::REInfo("MM time until = %g ", el_time);
-
-						begin = std::chrono::steady_clock::now();//only for debugging
-						GPBoost::matmul_f(((*cross_cov).transpose()).cast<float>(), D_cross_cov.cast<float>(), sigma_woodbury, GPU_use_);
-						end = std::chrono::steady_clock::now();//only for debugging
-						el_time = (double)(std::chrono::duration_cast<std::chrono::microseconds>(end - begin).count()) / 1000000.;//only for debugging
-						Log::REInfo("MM f time until = %g ", el_time);
+						if (!GPU_use_float) {
+							GPBoost::matmul((*cross_cov).transpose(), D_cross_cov, sigma_woodbury, GPU_use_);
+							end = std::chrono::steady_clock::now();//only for debugging
+							el_time = (double)(std::chrono::duration_cast<std::chrono::microseconds>(end - begin).count()) / 1000000.;//only for debugging
+							Log::REInfo("MM time until = %g ", el_time);
+						}
+						else {
+							begin = std::chrono::steady_clock::now();//only for debugging
+							GPBoost::matmul_f(((*cross_cov).transpose()).cast<float>(), D_cross_cov.cast<float>(), sigma_woodbury, GPU_use_);
+							end = std::chrono::steady_clock::now();//only for debugging
+							el_time = (double)(std::chrono::duration_cast<std::chrono::microseconds>(end - begin).count()) / 1000000.;//only for debugging
+							Log::REInfo("MM f time until = %g ", el_time);
+						}
 						//sigma_woodbury = ((*cross_cov).transpose() * fitc_resid_diag_[cluster_i].cwiseInverse().asDiagonal()) * (*cross_cov);
 						
 					}
