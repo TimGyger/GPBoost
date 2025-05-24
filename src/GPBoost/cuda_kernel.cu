@@ -14,6 +14,8 @@
 #include <cusparse.h>
 #include <device_launch_parameters.h>
 //#include <cusolverDn.h>
+#include <chrono>  // only for debugging
+#include <thread> // only for debugging
 #include <LightGBM/utils/log.h>
 using LightGBM::Log;
 
@@ -105,10 +107,18 @@ namespace GPBoost {
         C.resize(M, N);
 
         // Allocate and convert input matrices to float
+        Log::REInfo("start");//only for debugging
+        std::chrono::steady_clock::time_point begin, end;//only for debugging
+        double el_time;//only for debugging
+        begin = std::chrono::steady_clock::now();//only for debugging
         std::vector<float> A_f(M * K), B_f(K * N);
+#pragma omp parallel for schedule(static)   
         for (int i = 0; i < M * K; ++i) A_f[i] = static_cast<float>(A.data()[i]);
+#pragma omp parallel for schedule(static)   
         for (int i = 0; i < K * N; ++i) B_f[i] = static_cast<float>(B.data()[i]);
-
+        end = std::chrono::steady_clock::now();//only for debugging
+        el_time = (double)(std::chrono::duration_cast<std::chrono::microseconds>(end - begin).count()) / 1000000.;//only for debugging
+        Log::REInfo("To Float until = %g ", el_time);
         std::vector<float> C_f(M * N, 0.0f); // output in float
 
         float* d_A = nullptr, * d_B = nullptr, * d_C = nullptr;
@@ -163,10 +173,14 @@ namespace GPBoost {
         cudaMemcpy(C_f.data(), d_C, size_C, cudaMemcpyDeviceToHost);
 
         // Convert result back to double
+        begin = std::chrono::steady_clock::now();//only for debugging
+#pragma omp parallel for schedule(static) 
         for (int i = 0; i < M * N; ++i) {
             C.data()[i] = static_cast<double>(C_f[i]);
         }
-
+        end = std::chrono::steady_clock::now();//only for debugging
+        el_time = (double)(std::chrono::duration_cast<std::chrono::microseconds>(end - begin).count()) / 1000000.;//only for debugging
+        Log::REInfo("To Double until = %g ", el_time);
         cublasDestroy(handle);
         cudaFree(d_A); cudaFree(d_B); cudaFree(d_C);
 
