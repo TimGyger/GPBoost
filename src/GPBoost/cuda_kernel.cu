@@ -13,9 +13,7 @@
 #include <cublas_v2.h>
 #include <cusparse.h>
 #include <device_launch_parameters.h>
-//#include <cusolverDn.h>
-#include <chrono>  // only for debugging
-#include <thread> // only for debugging
+#include <cusolverDn.h>
 #include <LightGBM/utils/log.h>
 using LightGBM::Log;
 
@@ -94,84 +92,6 @@ namespace GPBoost {
         cudaFree(d_A); cudaFree(d_B); cudaFree(d_C);
 
         Log::REInfo("[GPU] Matrix multiplication completed with cuBLAS.");
-        return true;
-    }
-
-    bool try_matmul_gpu_float(const Eigen::MatrixXf& A, const Eigen::MatrixXf& B, den_mat_t& C) {
-        int M = A.rows(), K = A.cols(), N = B.cols();
-        if (K != B.rows()) {
-            Log::REInfo("[GPU] Dimension mismatch.");
-            return false;
-        }
-
-        C.resize(M, N); // Output is double
-
-        const float* h_A = A.data();
-        const float* h_B = B.data();
-
-        std::vector<float> C_f(M * N, 0.0f); // Temporary float result
-
-        float* d_A = nullptr, * d_B = nullptr, * d_C = nullptr;
-        cudaError_t cuda_stat;
-        cublasStatus_t stat;
-        cublasHandle_t handle;
-
-        size_t size_A = M * K * sizeof(float);
-        size_t size_B = K * N * sizeof(float);
-        size_t size_C = M * N * sizeof(float);
-
-        cuda_stat = cudaMalloc((void**)&d_A, size_A);
-        if (cuda_stat != cudaSuccess) return false;
-        cuda_stat = cudaMalloc((void**)&d_B, size_B);
-        if (cuda_stat != cudaSuccess) {
-            cudaFree(d_A);
-            return false;
-        }
-        cuda_stat = cudaMalloc((void**)&d_C, size_C);
-        if (cuda_stat != cudaSuccess) {
-            cudaFree(d_A); cudaFree(d_B);
-            return false;
-        }
-
-        cudaMemcpy(d_A, h_A, size_A, cudaMemcpyHostToDevice);
-        cudaMemcpy(d_B, h_B, size_B, cudaMemcpyHostToDevice);
-
-        stat = cublasCreate(&handle);
-        if (stat != CUBLAS_STATUS_SUCCESS) {
-            cudaFree(d_A); cudaFree(d_B); cudaFree(d_C);
-            return false;
-        }
-
-        const float alpha = 1.0f;
-        const float beta = 0.0f;
-
-        stat = cublasSgemm(handle,
-            CUBLAS_OP_N, CUBLAS_OP_N,
-            M, N, K,
-            &alpha,
-            d_A, M,
-            d_B, K,
-            &beta,
-            d_C, M);
-
-        if (stat != CUBLAS_STATUS_SUCCESS) {
-            cublasDestroy(handle);
-            cudaFree(d_A); cudaFree(d_B); cudaFree(d_C);
-            return false;
-        }
-
-        cudaMemcpy(C_f.data(), d_C, size_C, cudaMemcpyDeviceToHost);
-
-        // Convert float result to double in-place into C
-#pragma omp parallel for schedule(static) 
-        for (int i = 0; i < M * N; ++i) {
-            C.data()[i] = static_cast<double>(C_f[i]);
-        }
-
-        cublasDestroy(handle);
-        cudaFree(d_A); cudaFree(d_B); cudaFree(d_C);
-
-        Log::REInfo("[GPU] Matrix multiplication completed with cuBLAS (float input, double output).");
         return true;
     }
 
