@@ -505,32 +505,85 @@ namespace GPBoost {
     
     bool cholesky_cusolver_to_eigen(chol_den_mat_t& llt, const den_mat_t& A_input) {
         int N = A_input.rows();
-        if (A_input.cols() != N) return false;
+        if (A_input.cols() != N) {
+            Log::REInfo("Input matrix is not square.");
+            return false;
+        }
 
         // Step 1: Create cuSolver handle
         cusolverDnHandle_t handle;
-        CUSOLVER_CALL(cusolverDnCreate(&handle));
+        cusolverStatus_t status = cusolverDnCreate(&handle);
+        if (status != CUSOLVER_STATUS_SUCCESS) {
+            Log::REInfo("cuSOLVER initialization failed.");
+            return false;
+        }
 
         // Step 2: Allocate GPU memory for matrix
         double* d_A = nullptr;
-        CUDA_CALL(cudaMalloc(&d_A, sizeof(double) * N * N));
-        CUDA_CALL(cudaMemcpy(d_A, A_input.data(), sizeof(double) * N * N, cudaMemcpyHostToDevice));
+        cudaError_t cudaStat = cudaMalloc(&d_A, sizeof(double) * N * N);
+        if (cudaStat != cudaSuccess) {
+            Log::REInfo("cudaMalloc failed for d_A: " + std::string(cudaGetErrorString(cudaStat)));
+            cusolverDnDestroy(handle);
+            return false;
+        }
+
+        cudaStat = cudaMemcpy(d_A, A_input.data(), sizeof(double) * N * N, cudaMemcpyHostToDevice);
+        if (cudaStat != cudaSuccess) {
+            Log::REInfo("cudaMemcpy failed (Host to Device): " + std::string(cudaGetErrorString(cudaStat)));
+            cudaFree(d_A);
+            cusolverDnDestroy(handle);
+            return false;
+        }
 
         // Step 3: Query buffer size
         int work_size = 0;
-        CUSOLVER_CALL(cusolverDnDpotrf_bufferSize(handle, CUBLAS_FILL_MODE_LOWER, N, d_A, N, &work_size));
+        status = cusolverDnDpotrf_bufferSize(handle, CUBLAS_FILL_MODE_LOWER, N, d_A, N, &work_size);
+        if (status != CUSOLVER_STATUS_SUCCESS) {
+            Log::REInfo("cusolverDnDpotrf_bufferSize failed.");
+            cudaFree(d_A);
+            cusolverDnDestroy(handle);
+            return false;
+        }
+
         double* work = nullptr;
-        CUDA_CALL(cudaMalloc(&work, sizeof(double) * work_size));
+        cudaStat = cudaMalloc(&work, sizeof(double) * work_size);
+        if (cudaStat != cudaSuccess) {
+            Log::REInfo("cudaMalloc failed for workspace: " + std::string(cudaGetErrorString(cudaStat)));
+            cudaFree(d_A);
+            cusolverDnDestroy(handle);
+            return false;
+        }
 
         int* dev_info = nullptr;
-        CUDA_CALL(cudaMalloc(&dev_info, sizeof(int)));
+        cudaStat = cudaMalloc(&dev_info, sizeof(int));
+        if (cudaStat != cudaSuccess) {
+            Log::REInfo("cudaMalloc failed for dev_info: " + std::string(cudaGetErrorString(cudaStat)));
+            cudaFree(d_A);
+            cudaFree(work);
+            cusolverDnDestroy(handle);
+            return false;
+        }
 
         // Step 4: Compute Cholesky factorization
-        CUSOLVER_CALL(cusolverDnDpotrf(handle, CUBLAS_FILL_MODE_LOWER, N, d_A, N, work, work_size, dev_info));
+        status = cusolverDnDpotrf(handle, CUBLAS_FILL_MODE_LOWER, N, d_A, N, work, work_size, dev_info);
+        if (status != CUSOLVER_STATUS_SUCCESS) {
+            Log::REInfo("cusolverDnDpotrf failed.");
+            cudaFree(d_A); cudaFree(work); cudaFree(dev_info);
+            cusolverDnDestroy(handle);
+            return false;
+        }
 
         int dev_info_h = 0;
-        CUDA_CALL(cudaMemcpy(&dev_info_h, dev_info, sizeof(int), cudaMemcpyDeviceToHost));
+        cudaStat = cudaMemcpy(&dev_info_h, dev_info, sizeof(int), cudaMemcpyDeviceToHost);
+        if (cudaStat != cudaSuccess) {
+            Log::REInfo("cudaMemcpy failed (dev_info): " + std::string(cudaGetErrorString(cudaStat)));
+            cudaFree(d_A); cudaFree(work); cudaFree(dev_info);
+            cusolverDnDestroy(handle);
+            return false;
+        }
+
         if (dev_info_h != 0) {
+            Log::REInfo("Cholesky factorization failed on GPU: dev_info = " + std::to_string(dev_info_h));
             cudaFree(d_A); cudaFree(work); cudaFree(dev_info);
             cusolverDnDestroy(handle);
             return false;
@@ -538,7 +591,13 @@ namespace GPBoost {
 
         // Step 5: Copy result back (only lower triangle)
         den_mat_t L(N, N);
-        CUDA_CALL(cudaMemcpy(L.data(), d_A, sizeof(double) * N * N, cudaMemcpyDeviceToHost));
+        cudaStat = cudaMemcpy(L.data(), d_A, sizeof(double) * N * N, cudaMemcpyDeviceToHost);
+        if (cudaStat != cudaSuccess) {
+            Log::REInfo("cudaMemcpy failed (Device to Host): " + std::string(cudaGetErrorString(cudaStat)));
+            cudaFree(d_A); cudaFree(work); cudaFree(dev_info);
+            cusolverDnDestroy(handle);
+            return false;
+        }
 
         // Step 6: Feed to Eigen's LLT (only lower triangle will be used)
         llt.compute(L.selfadjointView<Eigen::Lower>());
@@ -549,7 +608,7 @@ namespace GPBoost {
         cudaFree(dev_info);
         cusolverDnDestroy(handle);
 
-        Log::REInfo("[GPU] Cholesky Factorization with cuSOLVER.");
+        Log::REInfo("[GPU] Cholesky factorization with cuSOLVER completed successfully.");
         return true;
     }
 
