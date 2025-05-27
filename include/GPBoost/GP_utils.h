@@ -711,6 +711,9 @@ namespace GPBoost {
 			d_row_ptr, d_col_idx, d_values,
 			d_M1, d_M2, n, m, K, only_triangular
 			);
+		end = std::chrono::steady_clock::now();//only for debugging
+		el_time = (double)(std::chrono::duration_cast<std::chrono::microseconds>(end - begin).count()) / 1000000.;//only for debugging
+		Log::REInfo("1.5 until = %g ", el_time);
 		cudaDeviceSynchronize();
 		end = std::chrono::steady_clock::now();//only for debugging
 		el_time = (double)(std::chrono::duration_cast<std::chrono::microseconds>(end - begin).count()) / 1000000.;//only for debugging
