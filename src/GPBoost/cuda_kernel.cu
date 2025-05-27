@@ -13,8 +13,10 @@
 #include <cublas_v2.h>
 #include <cusparse.h>
 #include <device_launch_parameters.h>
-#include <cusolverDn.h>
+//#include <cusolverDn.h>
 #include <LightGBM/utils/log.h>
+#include <chrono>  // only for debugging
+#include <thread> // only for debugging
 using LightGBM::Log;
 
 namespace GPBoost {
@@ -96,6 +98,10 @@ namespace GPBoost {
     }
 
     bool try_diag_times_dense_gpu(const vec_t& D, const den_mat_t& B, den_mat_t& C) {
+        Log::REInfo("start");//only for debugging
+        std::chrono::steady_clock::time_point begin, end;//only for debugging
+        double el_time;//only for debugging
+        begin = std::chrono::steady_clock::now();//only for debugging
         int M = B.rows();
         int N = B.cols();
 
@@ -122,11 +128,15 @@ namespace GPBoost {
 
         cudaMemcpy(d_D, h_D, M * sizeof(double), cudaMemcpyHostToDevice);
         cudaMemcpy(d_B, h_B, M * N * sizeof(double), cudaMemcpyHostToDevice);
-
+        end = std::chrono::steady_clock::now();//only for debugging
+        el_time = (double)(std::chrono::duration_cast<std::chrono::microseconds>(end - begin).count()) / 1000000.;//only for debugging
+        Log::REInfo("1 until = %g ", el_time);
         // Create cuBLAS handle
         cublasHandle_t handle;
         cublasCreate(&handle);
-
+        end = std::chrono::steady_clock::now();//only for debugging
+        el_time = (double)(std::chrono::duration_cast<std::chrono::microseconds>(end - begin).count()) / 1000000.;//only for debugging
+        Log::REInfo("2 until = %g ", el_time);
         // Multiply: C = diag(D) * B (i.e., scale each row of B by D[i])
         // Use cuBLAS: d_C = diag(d_D) * d_B
         cublasStatus_t stat = cublasDdgmm(handle,
@@ -135,7 +145,9 @@ namespace GPBoost {
             d_B, M,
             d_D, 1, // stride = 1
             d_C, M);
-
+        end = std::chrono::steady_clock::now();//only for debugging
+        el_time = (double)(std::chrono::duration_cast<std::chrono::microseconds>(end - begin).count()) / 1000000.;//only for debugging
+        Log::REInfo("3 until = %g ", el_time);
         if (stat != CUBLAS_STATUS_SUCCESS) {
             Log::REInfo("[GPU] cuBLAS Ddgmm failed.");
             cudaFree(d_D); cudaFree(d_B); cudaFree(d_C);
@@ -153,6 +165,9 @@ namespace GPBoost {
 
         Log::REInfo("[GPU] Diagonal x Dense matrix multiplication completed with cuBLAS.");
         return true;
+        end = std::chrono::steady_clock::now();//only for debugging
+        el_time = (double)(std::chrono::duration_cast<std::chrono::microseconds>(end - begin).count()) / 1000000.;//only for debugging
+        Log::REInfo("4 until = %g ", el_time);
     }
 
     bool try_sparse_dense_matmul_gpu(const sp_mat_rm_t& A, const den_mat_t& B, den_mat_t& C) {

@@ -566,7 +566,7 @@ if(USE_CUDA_GP)
     CUDA::cudart
     CUDA::cublas
     CUDA::cusparse
-    CUDA::cusolver
+    #CUDA::cusolver
   )
 
 endif(USE_CUDA_GP)
