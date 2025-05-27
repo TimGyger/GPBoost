@@ -12,7 +12,8 @@
 #include <GPBoost/type_defs.h>
 #include <GPBoost/utils.h>
 #include <LightGBM/utils/log.h>
-
+#include <chrono>  // only for debugging
+#include <thread> // only for debugging
 #ifdef USE_CUDA_GP
 #include <cuda_runtime.h>
 #include <cublas_v2.h>
@@ -667,6 +668,11 @@ namespace GPBoost {
 			const den_mat_t & M2,
 			bool only_triangular)
 	{
+		Log::REInfo("start");//only for debugging
+		std::chrono::steady_clock::time_point begin, end;//only for debugging
+		double el_time;//only for debugging
+		begin = std::chrono::steady_clock::now();//only for debugging
+
 		const int n = Sigma.rows();
 		const int m = Sigma.cols();
 		const int K = M1.rows();
@@ -696,6 +702,9 @@ namespace GPBoost {
 		cudaMemcpy(d_values, h_values, nnz * sizeof(double), cudaMemcpyHostToDevice);
 		cudaMemcpy(d_M1, M1.data(), K * m * sizeof(double), cudaMemcpyHostToDevice);
 		cudaMemcpy(d_M2, M2.data(), K * m * sizeof(double), cudaMemcpyHostToDevice);
+		end = std::chrono::steady_clock::now();//only for debugging
+		el_time = (double)(std::chrono::duration_cast<std::chrono::microseconds>(end - begin).count()) / 1000000.;//only for debugging
+		Log::REInfo("1 until = %g ", el_time);
 
 		// Kernel launch
 		launch_subtract_sparse_kernel(
@@ -703,9 +712,15 @@ namespace GPBoost {
 			d_M1, d_M2, n, m, K, only_triangular
 			);
 		cudaDeviceSynchronize();
+		end = std::chrono::steady_clock::now();//only for debugging
+		el_time = (double)(std::chrono::duration_cast<std::chrono::microseconds>(end - begin).count()) / 1000000.;//only for debugging
+		Log::REInfo("2 until = %g ", el_time);
 
 		// Copy result back
 		cudaMemcpy((void*)h_values, d_values, nnz * sizeof(double), cudaMemcpyDeviceToHost);
+		end = std::chrono::steady_clock::now();//only for debugging
+		el_time = (double)(std::chrono::duration_cast<std::chrono::microseconds>(end - begin).count()) / 1000000.;//only for debugging
+		Log::REInfo("3 until = %g ", el_time);
 
 		// Free device memory
 		cudaFree(d_row_ptr);
@@ -727,6 +742,9 @@ namespace GPBoost {
 				}
 			}
 		}
+		end = std::chrono::steady_clock::now();//only for debugging
+		el_time = (double)(std::chrono::duration_cast<std::chrono::microseconds>(end - begin).count()) / 1000000.;//only for debugging
+		Log::REInfo("4 until = %g ", el_time);
 
 		Log::REInfo("[GPU] Subtracted M1^T * M2 from sparse Sigma.");
 		return true;
