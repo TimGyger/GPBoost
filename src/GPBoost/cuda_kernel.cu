@@ -502,7 +502,7 @@ namespace GPBoost {
         cudaDeviceSynchronize();
     }
 
-    /*
+    
     bool cholesky_cusolver_to_eigen(chol_den_mat_t& llt, const den_mat_t& A_input) {
         int N = A_input.rows();
         if (A_input.cols() != N) return false;
@@ -548,7 +548,7 @@ namespace GPBoost {
 
         Log::REInfo("[GPU] Cholesky Factorization with cuSOLVE.");
         return true;
-    }*/
+    }
 
 }  // namespace GPBoost
 
