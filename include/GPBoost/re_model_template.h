@@ -1683,7 +1683,7 @@ namespace GPBoost {
 			int first_cov_par,
 			data_size_t cluster_i) {
 			Log::REInfo("CalcGradPars_FITC_FSA_GaussLikelihood_Cluster_i");//only for debugging
-			std::chrono::steady_clock::time_point begin, end;//only for debugging
+			std::chrono::steady_clock::time_point begin, end, begin1;//only for debugging
 			double el_time;//only for debugging
 			begin = std::chrono::steady_clock::now();//only for debugging
 			CHECK(gp_approx_ == "fitc" || gp_approx_ == "full_scale_tapering" || gp_approx_ == "full_scale_vecchia");
@@ -1808,11 +1808,16 @@ namespace GPBoost {
 						den_mat_t sigma_ip_stable_grad_sigma_ip_inv_sigma_cross_cov;// = sigma_ip_stable_grad * sigma_ip_inv_sigma_cross_cov;
 						GPBoost::matmul(sigma_ip_stable_grad, sigma_ip_inv_sigma_cross_cov, sigma_ip_stable_grad_sigma_ip_inv_sigma_cross_cov, GPU_use_);
 						//SubtractProdFromMat<T_mat>(*sigma_resid_grad, -sigma_ip_inv_sigma_cross_cov, sigma_ip_stable_grad * sigma_ip_inv_sigma_cross_cov, true);
+						begin1 = std::chrono::steady_clock::now();//only for debugging
 						GPBoost::SubtractProdFromMatrix<T_mat>(*sigma_resid_grad, -sigma_ip_inv_sigma_cross_cov, sigma_ip_stable_grad_sigma_ip_inv_sigma_cross_cov, true, false);
 						//SubtractProdFromMat<T_mat>(*sigma_resid_grad, (*cross_cov_grad).transpose(), sigma_ip_inv_sigma_cross_cov, false);
 						GPBoost::SubtractProdFromMatrix<T_mat>(*sigma_resid_grad, (*cross_cov_grad).transpose(), sigma_ip_inv_sigma_cross_cov, false, false);
 						//SubtractProdFromMat<T_mat>(*sigma_resid_grad, sigma_ip_inv_sigma_cross_cov, (*cross_cov_grad).transpose(), false);
 						GPBoost::SubtractProdFromMatrix<T_mat>(*sigma_resid_grad, sigma_ip_inv_sigma_cross_cov, (*cross_cov_grad).transpose(), false, false);
+						end = std::chrono::steady_clock::now();//only for debugging
+						el_time = (double)(std::chrono::duration_cast<std::chrono::microseconds>(end - begin1).count()) / 1000000.;//only for debugging
+						Log::REInfo("SUBPROD time until = %g ", el_time);
+
 						// Apply taper
 						re_comps_resid_[cluster_i][0][j]->ApplyTaper(*(re_comps_resid_[cluster_i][0][j]->dist_), *sigma_resid_grad);
 						if (matrix_inversion_method_ == "cholesky") {
