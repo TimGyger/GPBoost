@@ -476,7 +476,7 @@ namespace GPBoost {
                     dot += M1_row[k] * M2_row[k];
                 }
 
-                atomicAdd(&values[idx], -dot);
+                values[idx] -= dot;
             }
         }
     }
