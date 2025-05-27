@@ -6730,7 +6730,7 @@ namespace GPBoost {
 						sigma_ip_stable.diagonal().array() *= JITTER_MULT_IP_FITC_FSA;
 						//chol_fact_sigma_ip_[cluster_i][0].compute(sigma_ip_stable);
 						begin = std::chrono::steady_clock::now();//only for debugging
-						GPBoost::cholesky_solver(chol_fact_sigma_ip_[cluster_i][0], sigma_ip_stable, GPU_use_);
+						GPBoost::cholesky_solver(chol_fact_sigma_ip_[cluster_i][0], sigma_ip_stable, false);
 						end = std::chrono::steady_clock::now();//only for debugging
 						el_time = (double)(std::chrono::duration_cast<std::chrono::microseconds>(end - begin).count()) / 1000000.;//only for debugging
 						Log::REInfo("cholesky_solver time until = %g ", el_time);
