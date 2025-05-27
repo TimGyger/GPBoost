@@ -756,24 +756,40 @@ namespace GPBoost {
 
 	template <class T_mat>
 	void SubtractProdFromMatrix(T_mat& Sigma, const den_mat_t& M1, const den_mat_t& M2, bool only_triangular, bool GPU_use) {
+		Log::REInfo("start");//only for debugging
+		std::chrono::steady_clock::time_point begin, end;//only for debugging
+		double el_time;//only for debugging
+		begin = std::chrono::steady_clock::now();//only for debugging
 		if (!GPU_use) {
 			Log::REInfo("[Fallback] Forced Eigen matrix-multiplication.");
 			SubtractProdFromMat<T_mat>(Sigma, M1, M2, true);
 			return;
 		}
+		end = std::chrono::steady_clock::now();//only for debugging
+		el_time = (double)(std::chrono::duration_cast<std::chrono::microseconds>(end - begin).count()) / 1000000.;//only for debugging
+		Log::REInfo("Sub1 until = %g ", el_time);
+
 		int device_count = 0;
 		cudaError_t err = cudaGetDeviceCount(&device_count);
+		end = std::chrono::steady_clock::now();//only for debugging
+		el_time = (double)(std::chrono::duration_cast<std::chrono::microseconds>(end - begin).count()) / 1000000.;//only for debugging
+		Log::REInfo("Sub1.5 until = %g ", el_time);
 		if (err != cudaSuccess || device_count == 0) {
 			Log::REInfo("[Fallback] No CUDA devices found. Using Eigen for subtract Matrix product.");
 			SubtractProdFromMat<T_mat>(Sigma, M1, M2, true);
 			GPU_use = false;
 			return;
 		}
-
+		end = std::chrono::steady_clock::now();//only for debugging
+		el_time = (double)(std::chrono::duration_cast<std::chrono::microseconds>(end - begin).count()) / 1000000.;//only for debugging
+		Log::REInfo("Sub2 until = %g ", el_time);
 		if (!try_SubtractProdFromMat_CUDA(Sigma,M1,M2,only_triangular)) {
 			Log::REInfo("[Fallback] Error in computation on GPU. Using Eigen for subtract Matrix product.");
 			SubtractProdFromMat<T_mat>(Sigma, M1, M2, true);
 		}
+		end = std::chrono::steady_clock::now();//only for debugging
+		el_time = (double)(std::chrono::duration_cast<std::chrono::microseconds>(end - begin).count()) / 1000000.;//only for debugging
+		Log::REInfo("Sub3 until = %g ", el_time);
 	}
 
 #else
