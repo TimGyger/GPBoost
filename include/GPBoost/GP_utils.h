@@ -681,19 +681,20 @@ namespace GPBoost {
 			return false;
 		}
 
-		Sigma.makeCompressed();
+		//Sigma.makeCompressed();
 		const int nnz = Sigma.nonZeros();
 		const int* h_row_ptr = Sigma.outerIndexPtr();
 		const int* h_col_idx = Sigma.innerIndexPtr();
 		const double* h_values = Sigma.valuePtr();
 
-		// Allocate device memory
-		int* d_row_ptr, * d_col_idx;
-		double* d_values, * d_M1, * d_M2;
+		// Device memory
+		int* d_row_ptr = nullptr, * d_col_idx = nullptr;
+		double* d_values = nullptr, * d_M1 = nullptr, * d_M2 = nullptr;
+
 		cudaMalloc(&d_row_ptr, (n + 1) * sizeof(int));
 		cudaMalloc(&d_col_idx, nnz * sizeof(int));
 		cudaMalloc(&d_values, nnz * sizeof(double));
-		cudaMalloc(&d_M1, K * m * sizeof(double));
+		cudaMalloc(&d_M1, K * n * sizeof(double));
 		cudaMalloc(&d_M2, K * m * sizeof(double));
 
 		// Copy data to device

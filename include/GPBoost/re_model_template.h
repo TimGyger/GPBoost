@@ -1809,14 +1809,14 @@ namespace GPBoost {
 						GPBoost::matmul(sigma_ip_stable_grad, sigma_ip_inv_sigma_cross_cov, sigma_ip_stable_grad_sigma_ip_inv_sigma_cross_cov, GPU_use_);
 						//SubtractProdFromMat<T_mat>(*sigma_resid_grad, -sigma_ip_inv_sigma_cross_cov, sigma_ip_stable_grad * sigma_ip_inv_sigma_cross_cov, true);
 						begin1 = std::chrono::steady_clock::now();//only for debugging
-						GPBoost::SubtractProdFromMatrix<T_mat>(*sigma_resid_grad, -sigma_ip_inv_sigma_cross_cov, sigma_ip_stable_grad_sigma_ip_inv_sigma_cross_cov, true, false);
+						GPBoost::SubtractProdFromMatrix<T_mat>(*sigma_resid_grad, -sigma_ip_inv_sigma_cross_cov, sigma_ip_stable_grad_sigma_ip_inv_sigma_cross_cov, true, GPU_use_);
 						end = std::chrono::steady_clock::now();//only for debugging
 						el_time = (double)(std::chrono::duration_cast<std::chrono::microseconds>(end - begin1).count()) / 1000000.;//only for debugging
 						Log::REInfo("SUBPROD1 time until = %g ", el_time);
 						//SubtractProdFromMat<T_mat>(*sigma_resid_grad, (*cross_cov_grad).transpose(), sigma_ip_inv_sigma_cross_cov, false);
-						GPBoost::SubtractProdFromMatrix<T_mat>(*sigma_resid_grad, (*cross_cov_grad).transpose(), sigma_ip_inv_sigma_cross_cov, false, false);
+						GPBoost::SubtractProdFromMatrix<T_mat>(*sigma_resid_grad, (*cross_cov_grad).transpose(), sigma_ip_inv_sigma_cross_cov, false, GPU_use_);
 						//SubtractProdFromMat<T_mat>(*sigma_resid_grad, sigma_ip_inv_sigma_cross_cov, (*cross_cov_grad).transpose(), false);
-						GPBoost::SubtractProdFromMatrix<T_mat>(*sigma_resid_grad, sigma_ip_inv_sigma_cross_cov, (*cross_cov_grad).transpose(), false, false);
+						GPBoost::SubtractProdFromMatrix<T_mat>(*sigma_resid_grad, sigma_ip_inv_sigma_cross_cov, (*cross_cov_grad).transpose(), false, GPU_use_);
 						end = std::chrono::steady_clock::now();//only for debugging
 						el_time = (double)(std::chrono::duration_cast<std::chrono::microseconds>(end - begin1).count()) / 1000000.;//only for debugging
 						Log::REInfo("SUBPROD time until = %g ", el_time);

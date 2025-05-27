@@ -448,28 +448,33 @@ namespace GPBoost {
         }
     }
     __global__ void subtract_prod_from_sparse_mat_kernel(
-        const int* row_ptr, const int* col_idx, double* values,
-        const double* M1, const double* M2,
-        int n_rows, int n_cols, int K
-    ) {
-        int row = blockIdx.x * blockDim.x + threadIdx.x;
-        if (row >= n_rows) return;
+    const int* __restrict__ row_ptr,
+    const int* __restrict__ col_idx,
+    double* __restrict__ values,
+    const double* __restrict__ M1,  // Shape: (n_rows, K)
+    const double* __restrict__ M2,  // Shape: (n_cols, K)
+    int n_rows, int n_cols, int K)
+{
+    int row = blockIdx.x * blockDim.x + threadIdx.x;
+    if (row >= n_rows) return;
 
-        int row_start = row_ptr[row];
-        int row_end = row_ptr[row + 1];
+    int row_start = row_ptr[row];
+    int row_end = row_ptr[row + 1];
 
-        for (int idx = row_start; idx < row_end; ++idx) {
-            int col = col_idx[idx];
-            if (row <= col) {
-                double dot = 0.0;
-                for (int k = 0; k < K; ++k)
-                    dot += M1[row * K + k] * M2[col * K + k];
+    for (int idx = row_start; idx < row_end; ++idx) {
+        int col = col_idx[idx];
 
-                atomicAdd(&values[idx], -dot);
+        // Only compute upper triangle or diagonal
+        if (row <= col) {
+            double dot = 0.0;
+            for (int k = 0; k < K; ++k) {
+                dot += M1[row * K + k] * M2[col * K + k];
             }
-            // Note: for full symmetry, the host must mirror Sigma(j,i) = Sigma(i,j) afterwards
+            atomicAdd(&values[idx], -dot);
         }
+            // Note: for full symmetry, the host must mirror Sigma(j,i) = Sigma(i,j) afterwards
     }
+}
 
     void launch_subtract_sparse_kernel(
         const int* row_ptr, const int* col_idx, double* values,
@@ -480,7 +485,6 @@ namespace GPBoost {
         int numBlocks = (n + blockSize - 1) / blockSize;
         subtract_prod_from_sparse_mat_kernel << <numBlocks, blockSize >> > (
             row_ptr, col_idx, values, M1, M2, n, m, K);
-        cudaDeviceSynchronize();
     }
 
     void launch_subtract_prod_from_mat_kernel(
