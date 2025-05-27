@@ -465,7 +465,7 @@ namespace GPBoost {
                 for (int k = 0; k < K; ++k)
                     dot += M1[row * K + k] * M2[col * K + k];
 
-                atomicAdd(&values[idx], -dot);
+                values[idx] -= dot;
             }
             // Note: for full symmetry, the host must mirror Sigma(j,i) = Sigma(i,j) afterwards
         }
