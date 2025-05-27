@@ -448,27 +448,36 @@ namespace GPBoost {
         }
     }
 
+
     __global__ void subtract_prod_from_sparse_mat_kernel(
-        const int* row_ptr, const int* col_idx, double* values,
-        const double* M1, const double* M2,
-        int n_rows, int n_cols, int K
+        const int* __restrict__ row_ptr,
+        const int* __restrict__ col_idx,
+        double* __restrict__ values,
+        const double* __restrict__ M1,  // row-major: M1[row * K + k]
+        const double* __restrict__ M2,  // row-major: M2[col * K + k]
+        int n_rows,
+        int K
     ) {
         int row = blockIdx.x * blockDim.x + threadIdx.x;
         if (row >= n_rows) return;
 
-        int row_start = row_ptr[row];
-        int row_end = row_ptr[row + 1];
+        const int row_start = row_ptr[row];
+        const int row_end = row_ptr[row + 1];
 
         for (int idx = row_start; idx < row_end; ++idx) {
             int col = col_idx[idx];
-            if (row <= col) {
+            if (row <= col) {  // Only compute upper triangle
+                const double* M1_row = M1 + row * K;
+                const double* M2_row = M2 + col * K;
+
                 double dot = 0.0;
-                for (int k = 0; k < K; ++k)
-                    dot += M1[row * K + k] * M2[col * K + k];
+#pragma unroll
+                for (int k = 0; k < K; ++k) {
+                    dot += M1_row[k] * M2_row[k];
+                }
 
                 atomicAdd(&values[idx], -dot);
             }
-            // Note: for full symmetry, the host must mirror Sigma(j,i) = Sigma(i,j) afterwards
         }
     }
 
@@ -480,7 +489,7 @@ namespace GPBoost {
         int blockSize = 256;
         int numBlocks = (n + blockSize - 1) / blockSize;
         subtract_prod_from_sparse_mat_kernel << <numBlocks, blockSize >> > (
-            row_ptr, col_idx, values, M1, M2, n, m, K);
+            row_ptr, col_idx, values, M1, M2, n, K);
         cudaDeviceSynchronize();
     }
 
