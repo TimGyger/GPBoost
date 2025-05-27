@@ -715,7 +715,7 @@ namespace GPBoost {
 		end = std::chrono::steady_clock::now();//only for debugging
 		el_time = (double)(std::chrono::duration_cast<std::chrono::microseconds>(end - begin).count()) / 1000000.;//only for debugging
 		Log::REInfo("1.5 until = %g ", el_time);
-		cudaDeviceSynchronize();
+		//cudaDeviceSynchronize();
 		end = std::chrono::steady_clock::now();//only for debugging
 		el_time = (double)(std::chrono::duration_cast<std::chrono::microseconds>(end - begin).count()) / 1000000.;//only for debugging
 		Log::REInfo("2 until = %g ", el_time);
