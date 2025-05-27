@@ -522,14 +522,14 @@ namespace GPBoost {
         double* d_A = nullptr;
         cudaError_t cudaStat = cudaMalloc(&d_A, sizeof(double) * N * N);
         if (cudaStat != cudaSuccess) {
-            Log::REInfo("cudaMalloc failed for d_A: " + std::string(cudaGetErrorString(cudaStat)));
+            Log::REInfo("cudaMalloc failed for d_A");
             cusolverDnDestroy(handle);
             return false;
         }
 
         cudaStat = cudaMemcpy(d_A, A_input.data(), sizeof(double) * N * N, cudaMemcpyHostToDevice);
         if (cudaStat != cudaSuccess) {
-            Log::REInfo("cudaMemcpy failed (Host to Device): " + std::string(cudaGetErrorString(cudaStat)));
+            Log::REInfo("cudaMemcpy failed");
             cudaFree(d_A);
             cusolverDnDestroy(handle);
             return false;
@@ -548,7 +548,7 @@ namespace GPBoost {
         double* work = nullptr;
         cudaStat = cudaMalloc(&work, sizeof(double) * work_size);
         if (cudaStat != cudaSuccess) {
-            Log::REInfo("cudaMalloc failed for workspace: " + std::string(cudaGetErrorString(cudaStat)));
+            Log::REInfo("cudaMalloc failed for workspace");
             cudaFree(d_A);
             cusolverDnDestroy(handle);
             return false;
@@ -557,7 +557,7 @@ namespace GPBoost {
         int* dev_info = nullptr;
         cudaStat = cudaMalloc(&dev_info, sizeof(int));
         if (cudaStat != cudaSuccess) {
-            Log::REInfo("cudaMalloc failed for dev_info: " + std::string(cudaGetErrorString(cudaStat)));
+            Log::REInfo("cudaMalloc failed ");
             cudaFree(d_A);
             cudaFree(work);
             cusolverDnDestroy(handle);
@@ -576,14 +576,14 @@ namespace GPBoost {
         int dev_info_h = 0;
         cudaStat = cudaMemcpy(&dev_info_h, dev_info, sizeof(int), cudaMemcpyDeviceToHost);
         if (cudaStat != cudaSuccess) {
-            Log::REInfo("cudaMemcpy failed (dev_info): " + std::string(cudaGetErrorString(cudaStat)));
+            Log::REInfo("cudaMemcpy failed");
             cudaFree(d_A); cudaFree(work); cudaFree(dev_info);
             cusolverDnDestroy(handle);
             return false;
         }
 
         if (dev_info_h != 0) {
-            Log::REInfo("Cholesky factorization failed on GPU: dev_info = " + std::to_string(dev_info_h));
+            Log::REInfo("Cholesky factorization failed on GPU");
             cudaFree(d_A); cudaFree(work); cudaFree(dev_info);
             cusolverDnDestroy(handle);
             return false;
@@ -593,7 +593,7 @@ namespace GPBoost {
         den_mat_t L(N, N);
         cudaStat = cudaMemcpy(L.data(), d_A, sizeof(double) * N * N, cudaMemcpyDeviceToHost);
         if (cudaStat != cudaSuccess) {
-            Log::REInfo("cudaMemcpy failed (Device to Host): " + std::string(cudaGetErrorString(cudaStat)));
+            Log::REInfo("cudaMemcpy failed");
             cudaFree(d_A); cudaFree(work); cudaFree(dev_info);
             cusolverDnDestroy(handle);
             return false;
