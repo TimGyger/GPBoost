@@ -1754,7 +1754,7 @@ namespace GPBoost {
 					if (matrix_inversion_method_ == "cholesky") {
 						//den_mat_t sigma_ip_inv_sigma_ip_stable_grad = chol_fact_sigma_ip_[cluster_i][0].solve(sigma_ip_stable_grad);
 						den_mat_t sigma_ip_inv_sigma_ip_stable_grad;
-						GPBoost::solve_linear_sys(chol_fact_sigma_ip_[cluster_i][0], sigma_ip_stable_grad, sigma_ip_inv_sigma_ip_stable_grad, GPU_use_);
+						GPBoost::solve_linear_sys(chol_fact_sigma_ip_[cluster_i][0], sigma_ip_stable_grad, sigma_ip_inv_sigma_ip_stable_grad, false);
 						grad_cov_aux_par[first_cov_par + ind_par_[j] - 1 + ipar] -= 0.5 * sigma_ip_inv_sigma_ip_stable_grad.trace();
 					}
 					grad_cov_aux_par[first_cov_par + ind_par_[j] - 1 + ipar] += ((0.5 * sigma_ip_inv_cross_cov_y_aux.dot((sigma_ip_stable_grad)*sigma_ip_inv_cross_cov_y_aux)
