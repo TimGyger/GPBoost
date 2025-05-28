@@ -1704,7 +1704,8 @@ namespace GPBoost {
 				if (matrix_inversion_method_ == "cholesky" && gp_approx_ == "full_scale_tapering") {
 					// sigma_resid^-1 * t(cross_cov)
 					begin1 = std::chrono::steady_clock::now();//only for debugging
-					sigma_resid_inv_cross_cov_T = chol_fact_resid_[cluster_i].solve((*cross_cov));
+					//sigma_resid_inv_cross_cov_T = chol_fact_resid_[cluster_i].solve((*cross_cov));
+					GPBoost::solve_linear_sys<T_chol>(chol_fact_resid_[cluster_i], (*cross_cov), sigma_resid_inv_cross_cov_T, GPU_use_);
 					end = std::chrono::steady_clock::now();//only for debugging
 					el_time = (double)(std::chrono::duration_cast<std::chrono::microseconds>(end - begin1).count()) / 1000000.;//only for debugging
 					Log::REInfo("resid time until = %g ", el_time);
@@ -1730,7 +1731,7 @@ namespace GPBoost {
 						den_mat_t rand_vec_probe_P_inv_interim1;
 						GPBoost::matmul((*cross_cov_preconditioner).transpose(), diag_sigma_resid_inv_Z, rand_vec_probe_P_inv_interim1, GPU_use_);
 						den_mat_t rand_vec_probe_P_inv_interim2;
-						GPBoost::solve_linear_sys(chol_fact_woodbury_preconditioner_[cluster_i], rand_vec_probe_P_inv_interim1, rand_vec_probe_P_inv_interim2, GPU_use_);
+						GPBoost::solve_linear_sys<chol_den_mat_t>(chol_fact_woodbury_preconditioner_[cluster_i], rand_vec_probe_P_inv_interim1, rand_vec_probe_P_inv_interim2, GPU_use_);
 						den_mat_t rand_vec_probe_P_inv_interim3;
 						GPBoost::matmul((*cross_cov_preconditioner), rand_vec_probe_P_inv_interim2, rand_vec_probe_P_inv_interim3, GPU_use_);
 						rand_vec_probe_P_inv = diag_sigma_resid_inv_Z - (diagonal_approx_inv_preconditioner_[cluster_i].asDiagonal()* rand_vec_probe_P_inv_interim3);
@@ -1754,7 +1755,7 @@ namespace GPBoost {
 					if (matrix_inversion_method_ == "cholesky") {
 						//den_mat_t sigma_ip_inv_sigma_ip_stable_grad = chol_fact_sigma_ip_[cluster_i][0].solve(sigma_ip_stable_grad);
 						den_mat_t sigma_ip_inv_sigma_ip_stable_grad;
-						GPBoost::solve_linear_sys(chol_fact_sigma_ip_[cluster_i][0], sigma_ip_stable_grad, sigma_ip_inv_sigma_ip_stable_grad, GPU_use_);
+						GPBoost::solve_linear_sys<chol_den_mat_t>(chol_fact_sigma_ip_[cluster_i][0], sigma_ip_stable_grad, sigma_ip_inv_sigma_ip_stable_grad, GPU_use_);
 						grad_cov_aux_par[first_cov_par + ind_par_[j] - 1 + ipar] -= 0.5 * sigma_ip_inv_sigma_ip_stable_grad.trace();
 					}
 					Log::REInfo("T00 %g", grad_cov_aux_par[first_cov_par + ind_par_[j] - 1 + ipar]);
@@ -1811,7 +1812,7 @@ namespace GPBoost {
 						// sigma_ip^-1 * sigma_cross_cov
 						//den_mat_t sigma_ip_inv_sigma_cross_cov = chol_fact_sigma_ip_[cluster_i][0].solve((*cross_cov).transpose());
 						den_mat_t sigma_ip_inv_sigma_cross_cov;
-						GPBoost::solve_linear_sys(chol_fact_sigma_ip_[cluster_i][0], (*cross_cov).transpose(), sigma_ip_inv_sigma_cross_cov, GPU_use_);
+						GPBoost::solve_linear_sys<chol_den_mat_t>(chol_fact_sigma_ip_[cluster_i][0], (*cross_cov).transpose(), sigma_ip_inv_sigma_cross_cov, GPU_use_);
 						// Subtract gradient of predictive process covariance
 						den_mat_t sigma_ip_stable_grad_sigma_ip_inv_sigma_cross_cov;// = sigma_ip_stable_grad * sigma_ip_inv_sigma_cross_cov;
 						GPBoost::matmul(sigma_ip_stable_grad, sigma_ip_inv_sigma_cross_cov, sigma_ip_stable_grad_sigma_ip_inv_sigma_cross_cov, GPU_use_);
@@ -1866,7 +1867,7 @@ namespace GPBoost {
 							Log::REInfo("CalcGradPars_FITC_FSA_GaussLikelihood_Cluster_i time until = %g ", el_time);
 							den_mat_t sigma_ip_inv_sigma_ip_stable_grad;
 							//sigma_ip_inv_sigma_ip_stable_grad = chol_fact_sigma_ip_[cluster_i][0].solve(sigma_ip_stable_grad);
-							GPBoost::solve_linear_sys(chol_fact_sigma_ip_[cluster_i][0], sigma_ip_stable_grad, sigma_ip_inv_sigma_ip_stable_grad, GPU_use_);
+							GPBoost::solve_linear_sys<chol_den_mat_t>(chol_fact_sigma_ip_[cluster_i][0], sigma_ip_stable_grad, sigma_ip_inv_sigma_ip_stable_grad, GPU_use_);
 							// (Derivative of Sigma) * P^-1 * sample vectors
 							den_mat_t sigma_resid_grad_Z(num_data_per_cluster_[cluster_i], rand_vec_probe_P_inv.cols());
 							sigma_resid_grad_Z.setZero();
@@ -1912,7 +1913,7 @@ namespace GPBoost {
 								Tr_P += diagonal_approx_inv_preconditioner_[cluster_i].dot(diagonal_approx_grad_preconditioner);
 								//den_mat_t sigma_woodbury_inv_sigma_woodbury_stable_grad = chol_fact_woodbury_preconditioner_[cluster_i].solve(sigma_woodbury_preconditioner_grad);
 								den_mat_t sigma_woodbury_inv_sigma_woodbury_stable_grad;
-								GPBoost::solve_linear_sys(chol_fact_woodbury_preconditioner_[cluster_i], sigma_woodbury_preconditioner_grad, sigma_woodbury_inv_sigma_woodbury_stable_grad, GPU_use_);
+								GPBoost::solve_linear_sys<chol_den_mat_t>(chol_fact_woodbury_preconditioner_[cluster_i], sigma_woodbury_preconditioner_grad, sigma_woodbury_inv_sigma_woodbury_stable_grad, GPU_use_);
 								Tr_P += sigma_woodbury_inv_sigma_woodbury_stable_grad.trace();
 								// Calculate optimal c
 								double c_opt;
@@ -1930,7 +1931,7 @@ namespace GPBoost {
 						FITC_Diag_grad.array() += sigma_ip_stable_grad.coeffRef(0, 0);
 						//den_mat_t sigma_ip_inv_sigma_cross_cov = chol_fact_sigma_ip_[cluster_i][0].solve((*cross_cov).transpose());
 						den_mat_t sigma_ip_inv_sigma_cross_cov;
-						GPBoost::solve_linear_sys(chol_fact_sigma_ip_[cluster_i][0], (*cross_cov).transpose(), sigma_ip_inv_sigma_cross_cov, GPU_use_);
+						GPBoost::solve_linear_sys<chol_den_mat_t>(chol_fact_sigma_ip_[cluster_i][0], (*cross_cov).transpose(), sigma_ip_inv_sigma_cross_cov, GPU_use_);
 						//den_mat_t sigma_ip_grad_inv_sigma_cross_cov = sigma_ip_stable_grad * sigma_ip_inv_sigma_cross_cov;
 						den_mat_t sigma_ip_grad_inv_sigma_cross_cov;
 						GPBoost::matmul(sigma_ip_stable_grad, sigma_ip_inv_sigma_cross_cov, sigma_ip_grad_inv_sigma_cross_cov, GPU_use_);
@@ -1962,7 +1963,7 @@ namespace GPBoost {
 						sigma_woodbury_grad += (sigma_ip_stable_grad);
 						//den_mat_t sigma_woodbury_inv_sigma_woodbury_grad = chol_fact_sigma_woodbury_[cluster_i].solve(sigma_woodbury_grad);
 						den_mat_t sigma_woodbury_inv_sigma_woodbury_grad;
-						GPBoost::solve_linear_sys(chol_fact_sigma_woodbury_[cluster_i], sigma_woodbury_grad, sigma_woodbury_inv_sigma_woodbury_grad, GPU_use_);
+						GPBoost::solve_linear_sys<chol_den_mat_t>(chol_fact_sigma_woodbury_[cluster_i], sigma_woodbury_grad, sigma_woodbury_inv_sigma_woodbury_grad, GPU_use_);
 						Log::REInfo("T1 %g", grad_cov_aux_par[first_cov_par + ind_par_[j] - 1 + ipar]);
 						grad_cov_aux_par[first_cov_par + ind_par_[j] - 1 + ipar] += 0.5 * ((sigma_woodbury_inv_sigma_woodbury_grad.trace()));
 					}
@@ -8832,7 +8833,7 @@ namespace GPBoost {
 					const den_mat_t* cross_cov = re_comps_cross_cov_[cluster_i][0][j]->GetSigmaPtr();
 					//den_mat_t sigma_ip_inv_sigma_cross_cov = chol_fact_sigma_ip_[cluster_i][0].solve((*cross_cov).transpose());
 					den_mat_t sigma_ip_inv_sigma_cross_cov;
-					GPBoost::solve_linear_sys(chol_fact_sigma_ip_[cluster_i][0], (*cross_cov).transpose(), sigma_ip_inv_sigma_cross_cov, GPU_use_);
+					GPBoost::solve_linear_sys<chol_den_mat_t>(chol_fact_sigma_ip_[cluster_i][0], (*cross_cov).transpose(), sigma_ip_inv_sigma_cross_cov, GPU_use_);
 					int num_par_comp = re_comps_ip_[cluster_i][0][j]->num_cov_par_;
 					// Inverse of Sigma residual times cross covariance
 					den_mat_t Sigma_inv_cross_cov;
@@ -10018,7 +10019,7 @@ namespace GPBoost {
 					cov_mat_pred_obs, true, false, true, nullptr, true, cross_dist_resid);
 				//den_mat_t sigma_ip_inv_cross_cov_T = chol_fact_sigma_ip_[cluster_i][0].solve((*cross_cov).transpose());// Calculate Cm_inv * C_mn part of predictive process
 				den_mat_t sigma_ip_inv_cross_cov_T;
-				GPBoost::solve_linear_sys(chol_fact_sigma_ip_[cluster_i][0], (*cross_cov).transpose(), sigma_ip_inv_cross_cov_T, GPU_use_);
+				GPBoost::solve_linear_sys<chol_den_mat_t>(chol_fact_sigma_ip_[cluster_i][0], (*cross_cov).transpose(), sigma_ip_inv_cross_cov_T, GPU_use_);
 				SubtractProdFromNonSqMat<T_mat>(sigma_resid_pred_obs, cross_cov_pred_ip.transpose(), sigma_ip_inv_cross_cov_T);// Subtract predictive process (prediction) covariance
 				re_comps_resid_po_cluster_i->ApplyTaper(cross_dist_resid, sigma_resid_pred_obs);// Apply taper
 			}//end gp_approx_ == "full_scale_tapering"
@@ -10051,7 +10052,7 @@ namespace GPBoost {
 									if (!has_fitc_correction) {
 										has_fitc_correction = true;
 										//sigma_ip_inv_cross_cov_T = chol_fact_sigma_ip_[cluster_i][0].solve((*cross_cov).transpose());
-										GPBoost::solve_linear_sys(chol_fact_sigma_ip_[cluster_i][0], (*cross_cov).transpose(), sigma_ip_inv_cross_cov_T, GPU_use_);
+										GPBoost::solve_linear_sys<chol_den_mat_t>(chol_fact_sigma_ip_[cluster_i][0], (*cross_cov).transpose(), sigma_ip_inv_cross_cov_T, GPU_use_);
 									}
 								}
 								double fitc_corr_ij = sigma2 - (cross_cov_pred_ip.row(ii)).dot(sigma_ip_inv_cross_cov_T.col(jj));
@@ -10321,7 +10322,7 @@ namespace GPBoost {
 									den_mat_t sigma_resid_inv_cross_cov = chol_fact_resid_[cluster_i].solve((*cross_cov));// sigma_resid^-1 * cross_cov
 									//den_mat_t sigma_ip_inv_cross_cov_pred_T = chol_fact_sigma_ip_[cluster_i][0].solve(cross_cov_pred_ip.transpose());// sigma_ip^-1 * cross_cov_pred^T
 									den_mat_t sigma_ip_inv_cross_cov_pred_T;
-									GPBoost::solve_linear_sys(chol_fact_sigma_ip_[cluster_i][0], cross_cov_pred_ip.transpose(), sigma_ip_inv_cross_cov_pred_T, GPU_use_);
+									GPBoost::solve_linear_sys<chol_den_mat_t>(chol_fact_sigma_ip_[cluster_i][0], cross_cov_pred_ip.transpose(), sigma_ip_inv_cross_cov_pred_T, GPU_use_);
 									den_mat_t auto_cross_cov = ((*cross_cov).transpose() * sigma_resid_inv_cross_cov) * sigma_ip_inv_cross_cov_pred_T;// cross_cov^T * sigma_resid^-1 * cross_cov * sigma_ip^-1 * cross_cov_pred
 									den_mat_t sigma_resid_pred_obs_sigma_resid_inv_cross_cov(num_REs_pred, (*cross_cov).cols());// Sigma_resid_pred * sigma_resid^-1 * cross_cov
 #pragma omp parallel for schedule(static)   
@@ -10515,7 +10516,7 @@ namespace GPBoost {
 								// sigma_ip^-1 * cross_cov_pred
 								//den_mat_t sigma_ip_inv_cross_cov_pred_T = chol_fact_sigma_ip_[cluster_i][0].solve(cross_cov_pred_ip.transpose());
 								den_mat_t sigma_ip_inv_cross_cov_pred_T;
-								GPBoost::solve_linear_sys(chol_fact_sigma_ip_[cluster_i][0], cross_cov_pred_ip.transpose(), sigma_ip_inv_cross_cov_pred_T, GPU_use_);
+								GPBoost::solve_linear_sys<chol_den_mat_t>(chol_fact_sigma_ip_[cluster_i][0], cross_cov_pred_ip.transpose(), sigma_ip_inv_cross_cov_pred_T, GPU_use_);
 								// cross_cov^T * sigma^-1 * cross_cov
 								den_mat_t auto_cross_cov = (*cross_cov).transpose() * sigma_inv_cross_cov;
 								// cross_cov^T * sigma^-1 * cross_cov * sigma_ip^-1 * cross_cov_pred
