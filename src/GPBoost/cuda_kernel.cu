@@ -15,8 +15,6 @@
 #include <device_launch_parameters.h>
 #include <cusolverDn.h>
 #include <LightGBM/utils/log.h>
-#include <chrono>  // only for debugging
-#include <thread> // only for debugging
 using LightGBM::Log;
 
 namespace GPBoost {
@@ -155,10 +153,6 @@ namespace GPBoost {
     }
 
     bool try_sparse_dense_matmul_gpu(const sp_mat_rm_t& A, const den_mat_t& B, den_mat_t& C) {
-        Log::REInfo("start");//only for debugging
-        std::chrono::steady_clock::time_point begin, end;//only for debugging
-        double el_time;//only for debugging
-        begin = std::chrono::steady_clock::now();//only for debugging
         int M = A.rows(), K = A.cols(), N = B.cols();
         if (K != B.rows()) {
             Log::REInfo("[GPU] Dimension mismatch.");
@@ -191,33 +185,21 @@ namespace GPBoost {
         cudaMemcpy(d_values, h_values, nnz * sizeof(double), cudaMemcpyHostToDevice);
         cudaMemcpy(d_B, B.data(), K * N * sizeof(double), cudaMemcpyHostToDevice);
         //cudaMemset(d_C, 0, M * N * sizeof(double));
-        end = std::chrono::steady_clock::now();//only for debugging
-        el_time = (double)(std::chrono::duration_cast<std::chrono::microseconds>(end - begin).count()) / 1000000.;//only for debugging
-        Log::REInfo("1 until = %g ", el_time);
-
+        
         // Create cuSPARSE handle and descriptors
         cusparseHandle_t handle;
         cusparseCreate(&handle);
-        end = std::chrono::steady_clock::now();//only for debugging
-        el_time = (double)(std::chrono::duration_cast<std::chrono::microseconds>(end - begin).count()) / 1000000.;//only for debugging
-        Log::REInfo("2 until = %g ", el_time);
-
+        
         cusparseSpMatDescr_t matA;
         cusparseDnMatDescr_t matB, matC;
         cusparseCreateCsr(&matA, M, K, nnz,
             d_csrOffsets, d_columns, d_values,
             CUSPARSE_INDEX_32I, CUSPARSE_INDEX_32I,
             CUSPARSE_INDEX_BASE_ZERO, CUDA_R_64F);
-        end = std::chrono::steady_clock::now();//only for debugging
-        el_time = (double)(std::chrono::duration_cast<std::chrono::microseconds>(end - begin).count()) / 1000000.;//only for debugging
-        Log::REInfo("3 until = %g ", el_time);
-
+       
         cusparseCreateDnMat(&matB, K, N, K, d_B, CUDA_R_64F, CUSPARSE_ORDER_COL);
         cusparseCreateDnMat(&matC, M, N, M, d_C, CUDA_R_64F, CUSPARSE_ORDER_COL);
-        end = std::chrono::steady_clock::now();//only for debugging
-        el_time = (double)(std::chrono::duration_cast<std::chrono::microseconds>(end - begin).count()) / 1000000.;//only for debugging
-        Log::REInfo("4 until = %g ", el_time);
-
+        
         const double alpha = 1.0;
         const double beta = 0.0;
 
@@ -229,21 +211,14 @@ namespace GPBoost {
             &alpha, matA, matB, &beta, matC,
             CUDA_R_64F, CUSPARSE_SPMM_CSR_ALG2,
             &bufferSize);
-        end = std::chrono::steady_clock::now();//only for debugging
-        el_time = (double)(std::chrono::duration_cast<std::chrono::microseconds>(end - begin).count()) / 1000000.;//only for debugging
-        Log::REInfo("5 until = %g ", el_time);
-        cudaMalloc(&dBuffer, bufferSize);
-
+        
         cusparseStatus_t stat = cusparseSpMM(handle,
             CUSPARSE_OPERATION_NON_TRANSPOSE,
             CUSPARSE_OPERATION_NON_TRANSPOSE,
             &alpha, matA, matB, &beta, matC,
             CUDA_R_64F, CUSPARSE_SPMM_CSR_ALG2,
             dBuffer);
-        end = std::chrono::steady_clock::now();//only for debugging
-        el_time = (double)(std::chrono::duration_cast<std::chrono::microseconds>(end - begin).count()) / 1000000.;//only for debugging
-        Log::REInfo("6 until = %g ", el_time);
-
+        
         if (stat != CUSPARSE_STATUS_SUCCESS) {
             Log::REInfo("[GPU] cuSPARSE SpMM failed.");
             cusparseDestroySpMat(matA);
@@ -270,10 +245,7 @@ namespace GPBoost {
         cudaFree(d_values);
         cudaFree(d_B);
         cudaFree(d_C);
-        end = std::chrono::steady_clock::now();//only for debugging
-        el_time = (double)(std::chrono::duration_cast<std::chrono::microseconds>(end - begin).count()) / 1000000.;//only for debugging
-        Log::REInfo("7 until = %g ", el_time);
-
+        
         Log::REInfo("[GPU] Sparse x Dense matrix multiplication completed with cuSPARSE.");
         return true;
     }

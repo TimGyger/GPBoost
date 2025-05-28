@@ -1703,7 +1703,12 @@ namespace GPBoost {
 				den_mat_t rand_vec_probe_P_inv;
 				if (matrix_inversion_method_ == "cholesky" && gp_approx_ == "full_scale_tapering") {
 					// sigma_resid^-1 * t(cross_cov)
+					begin1 = std::chrono::steady_clock::now();//only for debugging
 					sigma_resid_inv_cross_cov_T = chol_fact_resid_[cluster_i].solve((*cross_cov));
+					end = std::chrono::steady_clock::now();//only for debugging
+					el_time = (double)(std::chrono::duration_cast<std::chrono::microseconds>(end - begin1).count()) / 1000000.;//only for debugging
+					Log::REInfo("resid time until = %g ", el_time);
+
 					sigma_resid = re_comps_resid_[cluster_i][0][j]->GetZSigmaZt();
 					// sigma_resid^-1 with sparsity pattern of sigma_resid
 					T_mat Identity(num_data_per_cluster_[cluster_i], num_data_per_cluster_[cluster_i]);
@@ -1809,24 +1814,13 @@ namespace GPBoost {
 						den_mat_t sigma_ip_stable_grad_sigma_ip_inv_sigma_cross_cov;// = sigma_ip_stable_grad * sigma_ip_inv_sigma_cross_cov;
 						GPBoost::matmul(sigma_ip_stable_grad, sigma_ip_inv_sigma_cross_cov, sigma_ip_stable_grad_sigma_ip_inv_sigma_cross_cov, GPU_use_);
 						//SubtractProdFromMat<T_mat>(*sigma_resid_grad, -sigma_ip_inv_sigma_cross_cov, sigma_ip_stable_grad * sigma_ip_inv_sigma_cross_cov, true);
-						begin1 = std::chrono::steady_clock::now();//only for debugging
 						sigma_ip_inv_sigma_cross_cov = -sigma_ip_inv_sigma_cross_cov;
-						end = std::chrono::steady_clock::now();//only for debugging
-						el_time = (double)(std::chrono::duration_cast<std::chrono::microseconds>(end - begin1).count()) / 1000000.;//only for debugging
-						Log::REInfo("SUBPROD0 time until = %g ", el_time);
 						GPBoost::SubtractProdFromMatrix<T_mat>(*sigma_resid_grad, sigma_ip_inv_sigma_cross_cov, sigma_ip_stable_grad_sigma_ip_inv_sigma_cross_cov, true, GPU_use_);
-						end = std::chrono::steady_clock::now();//only for debugging
-						el_time = (double)(std::chrono::duration_cast<std::chrono::microseconds>(end - begin1).count()) / 1000000.;//only for debugging
-						Log::REInfo("SUBPROD1 time until = %g ", el_time);
 						sigma_ip_inv_sigma_cross_cov = -sigma_ip_inv_sigma_cross_cov;
 						//SubtractProdFromMat<T_mat>(*sigma_resid_grad, (*cross_cov_grad).transpose(), sigma_ip_inv_sigma_cross_cov, false);
 						GPBoost::SubtractProdFromMatrix<T_mat>(*sigma_resid_grad, cross_cov_grad_t, sigma_ip_inv_sigma_cross_cov, false,  GPU_use_);
 						//SubtractProdFromMat<T_mat>(*sigma_resid_grad, sigma_ip_inv_sigma_cross_cov, (*cross_cov_grad).transpose(), false);
 						GPBoost::SubtractProdFromMatrix<T_mat>(*sigma_resid_grad, sigma_ip_inv_sigma_cross_cov, cross_cov_grad_t, false, GPU_use_);
-						end = std::chrono::steady_clock::now();//only for debugging
-						el_time = (double)(std::chrono::duration_cast<std::chrono::microseconds>(end - begin1).count()) / 1000000.;//only for debugging
-						Log::REInfo("SUBPROD time until = %g ", el_time);
-
 						// Apply taper
 						re_comps_resid_[cluster_i][0][j]->ApplyTaper(*(re_comps_resid_[cluster_i][0][j]->dist_), *sigma_resid_grad);
 						if (matrix_inversion_method_ == "cholesky") {

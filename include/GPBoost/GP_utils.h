@@ -12,8 +12,6 @@
 #include <GPBoost/type_defs.h>
 #include <GPBoost/utils.h>
 #include <LightGBM/utils/log.h>
-#include <chrono>  // only for debugging
-#include <thread> // only for debugging
 #ifdef USE_CUDA_GP
 #include <cuda_runtime.h>
 #include <cublas_v2.h>
@@ -668,11 +666,7 @@ namespace GPBoost {
 			const den_mat_t & M2,
 			bool only_triangular)
 	{
-		Log::REInfo("start");//only for debugging
-		std::chrono::steady_clock::time_point begin, end;//only for debugging
-		double el_time;//only for debugging
-		begin = std::chrono::steady_clock::now();//only for debugging
-
+		
 		const int n = Sigma.rows();
 		const int m = Sigma.cols();
 		const int K = M1.rows();
@@ -703,29 +697,16 @@ namespace GPBoost {
 		cudaMemcpy(d_values, h_values, nnz * sizeof(double), cudaMemcpyHostToDevice);
 		cudaMemcpy(d_M1, M1.data(), K * m * sizeof(double), cudaMemcpyHostToDevice);
 		cudaMemcpy(d_M2, M2.data(), K * m * sizeof(double), cudaMemcpyHostToDevice);
-		end = std::chrono::steady_clock::now();//only for debugging
-		el_time = (double)(std::chrono::duration_cast<std::chrono::microseconds>(end - begin).count()) / 1000000.;//only for debugging
-		Log::REInfo("1 until = %g ", el_time);
-
+		
 		// Kernel launch
 		launch_subtract_sparse_kernel(
 			d_row_ptr, d_col_idx, d_values,
 			d_M1, d_M2, n, m, K, only_triangular
 			);
-		end = std::chrono::steady_clock::now();//only for debugging
-		el_time = (double)(std::chrono::duration_cast<std::chrono::microseconds>(end - begin).count()) / 1000000.;//only for debugging
-		Log::REInfo("1.5 until = %g ", el_time);
 		//cudaDeviceSynchronize();
-		end = std::chrono::steady_clock::now();//only for debugging
-		el_time = (double)(std::chrono::duration_cast<std::chrono::microseconds>(end - begin).count()) / 1000000.;//only for debugging
-		Log::REInfo("2 until = %g ", el_time);
-
 		// Copy result back
 		cudaMemcpy((void*)h_values, d_values, nnz * sizeof(double), cudaMemcpyDeviceToHost);
-		end = std::chrono::steady_clock::now();//only for debugging
-		el_time = (double)(std::chrono::duration_cast<std::chrono::microseconds>(end - begin).count()) / 1000000.;//only for debugging
-		Log::REInfo("3 until = %g ", el_time);
-
+		
 		// Free device memory
 		cudaFree(d_row_ptr);
 		cudaFree(d_col_idx);
@@ -746,50 +727,31 @@ namespace GPBoost {
 				}
 			}
 		}
-		end = std::chrono::steady_clock::now();//only for debugging
-		el_time = (double)(std::chrono::duration_cast<std::chrono::microseconds>(end - begin).count()) / 1000000.;//only for debugging
-		Log::REInfo("4 until = %g ", el_time);
-
+		
 		Log::REInfo("[GPU] Subtracted M1^T * M2 from sparse Sigma.");
 		return true;
 	}
 
 	template <class T_mat>
 	void SubtractProdFromMatrix(T_mat& Sigma, const den_mat_t& M1, const den_mat_t& M2, bool only_triangular, bool GPU_use) {
-		Log::REInfo("start");//only for debugging
-		std::chrono::steady_clock::time_point begin, end;//only for debugging
-		double el_time;//only for debugging
-		begin = std::chrono::steady_clock::now();//only for debugging
 		if (!GPU_use) {
 			Log::REInfo("[Fallback] Forced Eigen matrix-multiplication.");
 			SubtractProdFromMat<T_mat>(Sigma, M1, M2, only_triangular);
 			return;
 		}
-		end = std::chrono::steady_clock::now();//only for debugging
-		el_time = (double)(std::chrono::duration_cast<std::chrono::microseconds>(end - begin).count()) / 1000000.;//only for debugging
-		Log::REInfo("Sub1 until = %g ", el_time);
-
+		
 		int device_count = 0;
 		cudaError_t err = cudaGetDeviceCount(&device_count);
-		end = std::chrono::steady_clock::now();//only for debugging
-		el_time = (double)(std::chrono::duration_cast<std::chrono::microseconds>(end - begin).count()) / 1000000.;//only for debugging
-		Log::REInfo("Sub1.5 until = %g ", el_time);
 		if (err != cudaSuccess || device_count == 0) {
 			Log::REInfo("[Fallback] No CUDA devices found. Using Eigen for subtract Matrix product.");
 			SubtractProdFromMat<T_mat>(Sigma, M1, M2, only_triangular);
 			GPU_use = false;
 			return;
 		}
-		end = std::chrono::steady_clock::now();//only for debugging
-		el_time = (double)(std::chrono::duration_cast<std::chrono::microseconds>(end - begin).count()) / 1000000.;//only for debugging
-		Log::REInfo("Sub2 until = %g ", el_time);
 		if (!try_SubtractProdFromMat_CUDA(Sigma,M1,M2,only_triangular)) {
 			Log::REInfo("[Fallback] Error in computation on GPU. Using Eigen for subtract Matrix product.");
 			SubtractProdFromMat<T_mat>(Sigma, M1, M2, only_triangular);
 		}
-		end = std::chrono::steady_clock::now();//only for debugging
-		el_time = (double)(std::chrono::duration_cast<std::chrono::microseconds>(end - begin).count()) / 1000000.;//only for debugging
-		Log::REInfo("Sub3 until = %g ", el_time);
 	}
 
 #else
