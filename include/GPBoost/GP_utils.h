@@ -897,10 +897,10 @@ namespace GPBoost {
 			cudaMemcpy(d_vecR, R_host.col(col).data(), n * sizeof(double), cudaMemcpyHostToDevice);
 
 			// Create dense vector descriptors
-			cusparseDnMatDescr_t vecR, vecY, vecX;
-			cusparseCreateDnMat(&vecR, n, 1, n, d_vecR, CUDA_R_64F, CUSPARSE_ORDER_COL);
-			cusparseCreateDnMat(&vecY, n, 1, n, d_vecY, CUDA_R_64F, CUSPARSE_ORDER_COL);
-			cusparseCreateDnMat(&vecX, n, 1, n, d_vecX, CUDA_R_64F, CUSPARSE_ORDER_COL);
+			cusparseDnVecDescr_t vecR, vecY, vecX;
+			cusparseDnVecCreate(&vecR, n, d_R_col, CUDA_R_64F);
+			cusparseDnVecCreate(&vecY, n, d_Y_col, CUDA_R_64F);
+			cusparseDnVecCreate(&vecX, n, d_Y_col, CUDA_R_64F);
 
 			// Solve L * Y = R (non-transpose)
 			cusparseSpSV_bufferSize(handle, CUSPARSE_OPERATION_NON_TRANSPOSE,
@@ -930,9 +930,9 @@ namespace GPBoost {
 			cudaMemcpy(X_host.col(col).data(), d_vecX, n * sizeof(double), cudaMemcpyDeviceToHost);
 
 			// Cleanup descriptors for this iteration
-			cusparseDnMatDestroy(vecR);
-			cusparseDnMatDestroy(vecY);
-			cusparseDnMatDestroy(vecX);
+			cusparseDnVecDestroy(vecR);
+			cusparseDnVecDestroy(vecY);
+			cusparseDnVecDestroy(vecX);
 			cudaFree(pBuffer);
 			pBuffer = nullptr;
 		}
