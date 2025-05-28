@@ -732,8 +732,8 @@ namespace GPBoost {
 		if (copy_results) {
 			cudaFree(d_row_ptr);
 			cudaFree(d_col_idx);
-			cudaFree(d_values);
 			cudaMemcpy((void*)h_values, d_values, nnz * sizeof(double), cudaMemcpyDeviceToHost);
+			cudaFree(d_values);
 		}
 		end = std::chrono::steady_clock::now();//only for debugging
 		el_time = (double)(std::chrono::duration_cast<std::chrono::microseconds>(end - begin).count()) / 1000000.;//only for debugging
