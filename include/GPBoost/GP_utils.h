@@ -842,7 +842,7 @@ namespace GPBoost {
 		using Eigen::MatrixXd;
 		using Index = int;
 
-		const SparseMatrix<double, Eigen::ColMajor>& L_host = chol.matrixL(); // Lower triangular sparse matrix
+		const sp_mat_t& L_host = chol.matrixL(); // Lower triangular sparse matrix
 		int n = L_host.rows();
 		int m = R_host.cols();
 
@@ -851,7 +851,7 @@ namespace GPBoost {
 		}
 
 		// Extract CSR data from Eigen::SparseMatrix
-		Eigen::SparseMatrix<double, Eigen::RowMajor> L_csr = L_host; // cuSPARSE prefers row-major CSR
+		sp_mat_rm_t L_csr = L_host; // cuSPARSE prefers row-major CSR
 		const Index* csrRowPtr = L_csr.outerIndexPtr();
 		const Index* csrColInd = L_csr.innerIndexPtr();
 		const double* csrVal = L_csr.valuePtr();
@@ -899,7 +899,7 @@ namespace GPBoost {
 
 		cusparseSpSVDescr_t spsvDescr;
 		cusparseSpSV_createDescr(&spsvDescr);
-
+		const double alpha = 1.0;
 		// --- Step 1: Solve L * Y = R
 		cusparseSpSV_bufferSize(handle, CUSPARSE_OPERATION_NON_TRANSPOSE,
 			&alpha, matL, vecR, vecY, CUDA_R_64F,
@@ -936,10 +936,10 @@ namespace GPBoost {
 		cudaFree(d_csrRowPtr); cudaFree(d_csrColInd); cudaFree(d_csrVal);
 		cudaFree(d_R); cudaFree(d_Y); cudaFree(d_X); cudaFree(pBuffer);
 		cusparseDestroyMatDescr(descr);
-		cusparseSpMatDestroy(matL);
-		cusparseDnMatDestroy(vecR);
-		cusparseDnMatDestroy(vecY);
-		cusparseDnMatDestroy(vecX);
+		::cusparseSpMatDestroy(matL);
+		::cusparseDnMatDestroy(vecR);
+		::cusparseDnMatDestroy(vecY);
+		::cusparseDnMatDestroy(vecX);
 		cusparseSpSV_destroyDescr(spsvDescr);
 		cusparseDestroy(handle);
 
