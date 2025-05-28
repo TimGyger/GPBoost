@@ -1744,6 +1744,7 @@ namespace GPBoost {
 					// Derivative of Components
 					std::shared_ptr<den_mat_t> cross_cov_grad = re_comps_cross_cov_[cluster_i][0][j]->GetZSigmaZtGrad(ipar, true, 0.);
 					den_mat_t sigma_ip_stable_grad = *(re_comps_ip_[cluster_i][0][j]->GetZSigmaZtGrad(ipar, true, 0.));
+					den_mat_t cross_cov_grad_t = (*cross_cov_grad).transpose();
 					// Trace of sigma_ip^-1 * sigma_ip_grad
 					if (matrix_inversion_method_ == "cholesky") {
 						//den_mat_t sigma_ip_inv_sigma_ip_stable_grad = chol_fact_sigma_ip_[cluster_i][0].solve(sigma_ip_stable_grad);
@@ -1752,7 +1753,7 @@ namespace GPBoost {
 						grad_cov_aux_par[first_cov_par + ind_par_[j] - 1 + ipar] -= 0.5 * sigma_ip_inv_sigma_ip_stable_grad.trace();
 					}
 					grad_cov_aux_par[first_cov_par + ind_par_[j] - 1 + ipar] += ((0.5 * sigma_ip_inv_cross_cov_y_aux.dot((sigma_ip_stable_grad)*sigma_ip_inv_cross_cov_y_aux)
-						- (((*cross_cov_grad).transpose()) * y_aux_[cluster_i]).dot(sigma_ip_inv_cross_cov_y_aux)) / cov_pars[0]);
+						- ((cross_cov_grad_t) * y_aux_[cluster_i]).dot(sigma_ip_inv_cross_cov_y_aux)) / cov_pars[0]);
 					// sigma_woodbury_grad
 					den_mat_t sigma_woodbury_grad;
 					den_mat_t cross_cov_grad_sigma_resid_inv_cross_cov_T;
@@ -1777,7 +1778,7 @@ namespace GPBoost {
 						GPBoost::sparse_dense_matmul(D_grad_rm, D_inv_B_cross_cov_[cluster_i][0], D_grad_sigma_resid_inv_cross_cov_T, false);
 						// cross_crov_grad *  sigma_resid^-1 * t(cross_cov)
 						//cross_cov_grad_sigma_resid_inv_cross_cov_T = (*cross_cov_grad).transpose() * B_T_D_inv_B_cross_cov_[cluster_i][0];
-						GPBoost::matmul((*cross_cov_grad).transpose(), B_T_D_inv_B_cross_cov_[cluster_i][0], cross_cov_grad_sigma_resid_inv_cross_cov_T, GPU_use_);
+						GPBoost::matmul(cross_cov_grad_t, B_T_D_inv_B_cross_cov_[cluster_i][0], cross_cov_grad_sigma_resid_inv_cross_cov_T, GPU_use_);
 						// cross_cov * B_grad * D^-1 * B * t(cross_cov)
 						//den_mat_t cross_cov_B_grad_cross_cov_T = cross_cov_B_grad.transpose() * D_inv_B_cross_cov_[cluster_i][0];
 						den_mat_t cross_cov_B_grad_cross_cov_T;
@@ -1819,9 +1820,9 @@ namespace GPBoost {
 						Log::REInfo("SUBPROD1 time until = %g ", el_time);
 						sigma_ip_inv_sigma_cross_cov = -sigma_ip_inv_sigma_cross_cov;
 						//SubtractProdFromMat<T_mat>(*sigma_resid_grad, (*cross_cov_grad).transpose(), sigma_ip_inv_sigma_cross_cov, false);
-						GPBoost::SubtractProdFromMatrix<T_mat>(*sigma_resid_grad, (*cross_cov_grad).transpose(), sigma_ip_inv_sigma_cross_cov, false,  GPU_use_);
+						GPBoost::SubtractProdFromMatrix<T_mat>(*sigma_resid_grad, cross_cov_grad_t, sigma_ip_inv_sigma_cross_cov, false,  GPU_use_);
 						//SubtractProdFromMat<T_mat>(*sigma_resid_grad, sigma_ip_inv_sigma_cross_cov, (*cross_cov_grad).transpose(), false);
-						GPBoost::SubtractProdFromMatrix<T_mat>(*sigma_resid_grad, sigma_ip_inv_sigma_cross_cov, (*cross_cov_grad).transpose(), false, GPU_use_);
+						GPBoost::SubtractProdFromMatrix<T_mat>(*sigma_resid_grad, sigma_ip_inv_sigma_cross_cov, cross_cov_grad_t, false, GPU_use_);
 						end = std::chrono::steady_clock::now();//only for debugging
 						el_time = (double)(std::chrono::duration_cast<std::chrono::microseconds>(end - begin1).count()) / 1000000.;//only for debugging
 						Log::REInfo("SUBPROD time until = %g ", el_time);
@@ -1831,7 +1832,7 @@ namespace GPBoost {
 						if (matrix_inversion_method_ == "cholesky") {
 							// cross_crov_grad *  sigma_resid^-1 * t(cross_cov)
 							//cross_cov_grad_sigma_resid_inv_cross_cov_T = ((*cross_cov_grad).transpose()) * sigma_resid_inv_cross_cov_T;
-							GPBoost::matmul((*cross_cov_grad).transpose(), sigma_resid_inv_cross_cov_T, cross_cov_grad_sigma_resid_inv_cross_cov_T, GPU_use_);
+							GPBoost::matmul(cross_cov_grad_t, sigma_resid_inv_cross_cov_T, cross_cov_grad_sigma_resid_inv_cross_cov_T, GPU_use_);
 							// cross_crov_grad *  sigma_resid^-1 * t(cross_cov) + cross_crov *  sigma_resid^-1 * t(cross_cov_grad) - cross_cov * sigma_resid^-1 * sigma_resid_grad * sigma_resid^-1 * t(cross_cov)
 							den_mat_t sigma_resid_grad_sigma_resid_inv_cross_cov_T = (*sigma_resid_grad)* sigma_resid_inv_cross_cov_T;
 							//den_mat_t cross_cov_sigma_resid_inv_sigma_resid_grad_sigma_resid_inv_cross_cov_T = sigma_resid_inv_cross_cov_T.transpose() * sigma_resid_grad_sigma_resid_inv_cross_cov_T;
@@ -1884,7 +1885,7 @@ namespace GPBoost {
 							den_mat_t cross_cov_grad_sigma_ip_inv_sigma_cross_cov_Z;
 							GPBoost::matmul((*cross_cov_grad), sigma_ip_inv_sigma_cross_cov_Z, cross_cov_grad_sigma_ip_inv_sigma_cross_cov_Z, GPU_use_);
 							den_mat_t cross_cov_grad_rand_vec_probe_P_inv;
-							GPBoost::matmul((*cross_cov_grad).transpose(), rand_vec_probe_P_inv, cross_cov_grad_rand_vec_probe_P_inv, GPU_use_);
+							GPBoost::matmul(cross_cov_grad_t, rand_vec_probe_P_inv, cross_cov_grad_rand_vec_probe_P_inv, GPU_use_);
 							den_mat_t sigma_ip_inv_cross_cov_grad_rand_vec_probe_P_inv;
 							GPBoost::matmul(sigma_ip_inv_sigma_cross_cov.transpose(), cross_cov_grad_rand_vec_probe_P_inv, sigma_ip_inv_cross_cov_grad_rand_vec_probe_P_inv, GPU_use_);
 							den_mat_t sigma_ip_inv_sigma_ip_grad_rand_vec_probe_P_inv;
@@ -1937,7 +1938,7 @@ namespace GPBoost {
 						GPBoost::matmul(sigma_ip_stable_grad, sigma_ip_inv_sigma_cross_cov, sigma_ip_grad_inv_sigma_cross_cov, GPU_use_);
 #pragma omp parallel for schedule(static)
 						for (int ii = 0; ii < num_data_per_cluster_[cluster_i]; ++ii) {
-							FITC_Diag_grad[ii] -= 2 * sigma_ip_inv_sigma_cross_cov.col(ii).dot((*cross_cov_grad).transpose().col(ii))
+							FITC_Diag_grad[ii] -= 2 * sigma_ip_inv_sigma_cross_cov.col(ii).dot(cross_cov_grad_t.col(ii))
 								- sigma_ip_inv_sigma_cross_cov.col(ii).dot(sigma_ip_grad_inv_sigma_cross_cov.col(ii));
 						}
 						sigma_ip_inv_sigma_cross_cov.resize(0, 0);
