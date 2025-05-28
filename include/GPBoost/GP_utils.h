@@ -622,7 +622,9 @@ namespace GPBoost {
 	bool try_SubtractProdFromMat_CUDA(T_mat& Sigma,
 		const den_mat_t& M1,
 		const den_mat_t& M2,
-		bool only_triangular)
+		bool only_triangular,
+		bool copy_target, 
+		bool copy_results)
 	{
 
 		const int n = Sigma.rows();
@@ -641,23 +643,25 @@ namespace GPBoost {
 
 		cudaMalloc(&d_M1, size_M1);
 		cudaMalloc(&d_M2, size_M2);
-		cudaMalloc(&d_Sigma, size_Sigma);
-
+		if (copy_target) {
+			cudaMalloc(&d_Sigma, size_Sigma);
+		}
 		cudaMemcpy(d_M1, M1.data(), size_M1, cudaMemcpyHostToDevice);
 		cudaMemcpy(d_M2, M2.data(), size_M2, cudaMemcpyHostToDevice);
-		cudaMemcpy(d_Sigma, Sigma.data(), size_Sigma, cudaMemcpyHostToDevice);
-
+		if (copy_target) {
+			cudaMemcpy(d_Sigma, Sigma.data(), size_Sigma, cudaMemcpyHostToDevice);
+		}
 		launch_subtract_prod_from_mat_kernel (
 			d_M1, d_M2, d_Sigma,
 			k, n, k, m,
 			only_triangular
 			);
-
-		cudaMemcpy(Sigma.data(), d_Sigma, size_Sigma, cudaMemcpyDeviceToHost);
-
+		if (copy_results) {
+			cudaMemcpy(Sigma.data(), d_Sigma, size_Sigma, cudaMemcpyDeviceToHost);
+			cudaFree(d_Sigma);
+		}
 		cudaFree(d_M1);
 		cudaFree(d_M2);
-		cudaFree(d_Sigma);
 
 		Log::REInfo("[GPU] Subtract product with cuBLAS.");
 		return true;
@@ -666,7 +670,9 @@ namespace GPBoost {
 	bool try_SubtractProdFromMat_CUDA(T_mat & Sigma,
 			const den_mat_t & M1,
 			const den_mat_t & M2,
-			bool only_triangular)
+			bool only_triangular,
+			bool copy_target,
+			bool copy_results)
 	{
 		Log::REInfo("start");//only for debugging
 		std::chrono::steady_clock::time_point begin, end;//only for debugging
@@ -691,16 +697,18 @@ namespace GPBoost {
 		int* d_row_ptr = nullptr, * d_col_idx = nullptr;
 		double* d_values = nullptr, * d_M1 = nullptr, * d_M2 = nullptr;
 
-		cudaMalloc(&d_row_ptr, (n + 1) * sizeof(int));
-		cudaMalloc(&d_col_idx, nnz * sizeof(int));
-		cudaMalloc(&d_values, nnz * sizeof(double));
 		cudaMalloc(&d_M1, K * n * sizeof(double));
 		cudaMalloc(&d_M2, K * m * sizeof(double));
 
 		// Copy data to device
-		cudaMemcpy(d_row_ptr, h_row_ptr, (n + 1) * sizeof(int), cudaMemcpyHostToDevice);
-		cudaMemcpy(d_col_idx, h_col_idx, nnz * sizeof(int), cudaMemcpyHostToDevice);
-		cudaMemcpy(d_values, h_values, nnz * sizeof(double), cudaMemcpyHostToDevice);
+		if (copy_target) {
+			cudaMalloc(&d_row_ptr, (n + 1) * sizeof(int));
+			cudaMalloc(&d_col_idx, nnz * sizeof(int));
+			cudaMalloc(&d_values, nnz * sizeof(double));
+			cudaMemcpy(d_row_ptr, h_row_ptr, (n + 1) * sizeof(int), cudaMemcpyHostToDevice);
+			cudaMemcpy(d_col_idx, h_col_idx, nnz * sizeof(int), cudaMemcpyHostToDevice);
+			cudaMemcpy(d_values, h_values, nnz * sizeof(double), cudaMemcpyHostToDevice);
+		}
 		cudaMemcpy(d_M1, M1.data(), K * m * sizeof(double), cudaMemcpyHostToDevice);
 		cudaMemcpy(d_M2, M2.data(), K * m * sizeof(double), cudaMemcpyHostToDevice);
 		end = std::chrono::steady_clock::now();//only for debugging
@@ -721,15 +729,17 @@ namespace GPBoost {
 		Log::REInfo("2 until = %g ", el_time);
 
 		// Copy result back
-		cudaMemcpy((void*)h_values, d_values, nnz * sizeof(double), cudaMemcpyDeviceToHost);
+		if (copy_results) {
+			cudaFree(d_row_ptr);
+			cudaFree(d_col_idx);
+			cudaFree(d_values);
+			cudaMemcpy((void*)h_values, d_values, nnz * sizeof(double), cudaMemcpyDeviceToHost);
+		}
 		end = std::chrono::steady_clock::now();//only for debugging
 		el_time = (double)(std::chrono::duration_cast<std::chrono::microseconds>(end - begin).count()) / 1000000.;//only for debugging
 		Log::REInfo("3 until = %g ", el_time);
 
 		// Free device memory
-		cudaFree(d_row_ptr);
-		cudaFree(d_col_idx);
-		cudaFree(d_values);
 		cudaFree(d_M1);
 		cudaFree(d_M2);
 
@@ -755,14 +765,14 @@ namespace GPBoost {
 	}
 
 	template <class T_mat>
-	void SubtractProdFromMatrix(T_mat& Sigma, const den_mat_t& M1, const den_mat_t& M2, bool only_triangular, bool GPU_use) {
+	void SubtractProdFromMatrix(T_mat& Sigma, const den_mat_t& M1, const den_mat_t& M2, bool only_triangular, bool copy_target, bool copy_results, bool GPU_use) {
 		Log::REInfo("start");//only for debugging
 		std::chrono::steady_clock::time_point begin, end;//only for debugging
 		double el_time;//only for debugging
 		begin = std::chrono::steady_clock::now();//only for debugging
 		if (!GPU_use) {
 			Log::REInfo("[Fallback] Forced Eigen matrix-multiplication.");
-			SubtractProdFromMat<T_mat>(Sigma, M1, M2, true);
+			SubtractProdFromMat<T_mat>(Sigma, M1, M2, only_triangular);
 			return;
 		}
 		end = std::chrono::steady_clock::now();//only for debugging
@@ -776,16 +786,16 @@ namespace GPBoost {
 		Log::REInfo("Sub1.5 until = %g ", el_time);
 		if (err != cudaSuccess || device_count == 0) {
 			Log::REInfo("[Fallback] No CUDA devices found. Using Eigen for subtract Matrix product.");
-			SubtractProdFromMat<T_mat>(Sigma, M1, M2, true);
+			SubtractProdFromMat<T_mat>(Sigma, M1, M2, only_triangular);
 			GPU_use = false;
 			return;
 		}
 		end = std::chrono::steady_clock::now();//only for debugging
 		el_time = (double)(std::chrono::duration_cast<std::chrono::microseconds>(end - begin).count()) / 1000000.;//only for debugging
 		Log::REInfo("Sub2 until = %g ", el_time);
-		if (!try_SubtractProdFromMat_CUDA(Sigma,M1,M2,only_triangular)) {
+		if (!try_SubtractProdFromMat_CUDA(Sigma,M1,M2,only_triangular, copy_target, copy_results)) {
 			Log::REInfo("[Fallback] Error in computation on GPU. Using Eigen for subtract Matrix product.");
-			SubtractProdFromMat<T_mat>(Sigma, M1, M2, true);
+			SubtractProdFromMat<T_mat>(Sigma, M1, M2, only_triangular);
 		}
 		end = std::chrono::steady_clock::now();//only for debugging
 		el_time = (double)(std::chrono::duration_cast<std::chrono::microseconds>(end - begin).count()) / 1000000.;//only for debugging
@@ -795,12 +805,12 @@ namespace GPBoost {
 #else
 
 template <class T_mat>
-void SubtractProdFromMatrix(T_mat& Sigma, const den_mat_t& M1, const den_mat_t& M2, bool only_triangular, bool GPU_use) {
+void SubtractProdFromMatrix(T_mat& Sigma, const den_mat_t& M1, const den_mat_t& M2, bool only_triangular, bool copy_target, bool copy_results, bool GPU_use) {
 	if (GPU_use) {
 		Log::REInfo("[Fallback] Not able to compile CUDA Code. Continuing with CPU support.");
 		GPU_use = false;
 	}
-	SubtractProdFromMat<T_mat>(Sigma, M1, M2, true);
+	SubtractProdFromMat<T_mat>(Sigma, M1, M2, only_triangular);
 }
 
 #endif  // USE_CUDA_GP
