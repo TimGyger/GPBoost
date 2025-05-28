@@ -1754,11 +1754,13 @@ namespace GPBoost {
 					if (matrix_inversion_method_ == "cholesky") {
 						//den_mat_t sigma_ip_inv_sigma_ip_stable_grad = chol_fact_sigma_ip_[cluster_i][0].solve(sigma_ip_stable_grad);
 						den_mat_t sigma_ip_inv_sigma_ip_stable_grad;
-						GPBoost::solve_linear_sys(chol_fact_sigma_ip_[cluster_i][0], sigma_ip_stable_grad, sigma_ip_inv_sigma_ip_stable_grad, false);
+						GPBoost::solve_linear_sys(chol_fact_sigma_ip_[cluster_i][0], sigma_ip_stable_grad, sigma_ip_inv_sigma_ip_stable_grad, GPU_use_);
 						grad_cov_aux_par[first_cov_par + ind_par_[j] - 1 + ipar] -= 0.5 * sigma_ip_inv_sigma_ip_stable_grad.trace();
 					}
+					Log::REInfo("T00 %g", grad_cov_aux_par[first_cov_par + ind_par_[j] - 1 + ipar]);
 					grad_cov_aux_par[first_cov_par + ind_par_[j] - 1 + ipar] += ((0.5 * sigma_ip_inv_cross_cov_y_aux.dot((sigma_ip_stable_grad)*sigma_ip_inv_cross_cov_y_aux)
 						- ((cross_cov_grad_t) * y_aux_[cluster_i]).dot(sigma_ip_inv_cross_cov_y_aux)) / cov_pars[0]);
+					Log::REInfo("T01 %g", grad_cov_aux_par[first_cov_par + ind_par_[j] - 1 + ipar]);
 					// sigma_woodbury_grad
 					den_mat_t sigma_woodbury_grad;
 					den_mat_t cross_cov_grad_sigma_resid_inv_cross_cov_T;
@@ -1834,7 +1836,9 @@ namespace GPBoost {
 							GPBoost::matmul(sigma_resid_inv_cross_cov_T.transpose(), sigma_resid_grad_sigma_resid_inv_cross_cov_T, cross_cov_sigma_resid_inv_sigma_resid_grad_sigma_resid_inv_cross_cov_T, GPU_use_);
 							sigma_woodbury_grad = cross_cov_grad_sigma_resid_inv_cross_cov_T + cross_cov_grad_sigma_resid_inv_cross_cov_T.transpose() -
 								cross_cov_sigma_resid_inv_sigma_resid_grad_sigma_resid_inv_cross_cov_T;
+							Log::REInfo("T0 %g", grad_cov_aux_par[first_cov_par + ind_par_[j] - 1 + ipar]);
 							grad_cov_aux_par[first_cov_par + ind_par_[j] - 1 + ipar] += 0.5 * ((double)(((*sigma_resid).cwiseProduct(*sigma_resid_grad)).sum()));
+							Log::REInfo("T0.5 %g", grad_cov_aux_par[first_cov_par + ind_par_[j] - 1 + ipar]);
 						}
 						else if (matrix_inversion_method_ == "iterative") {// Conjugate Gradient
 							// Derivative of Woodbury preconditioner matrix (Cm + Cmn * diag(Cs)^-1 * Cnm) or (Lambda + t(EVects of Cm) * Cmn * diag(Cs)^-1 * Cnm * EVects of Cm)
@@ -1959,6 +1963,7 @@ namespace GPBoost {
 						//den_mat_t sigma_woodbury_inv_sigma_woodbury_grad = chol_fact_sigma_woodbury_[cluster_i].solve(sigma_woodbury_grad);
 						den_mat_t sigma_woodbury_inv_sigma_woodbury_grad;
 						GPBoost::solve_linear_sys(chol_fact_sigma_woodbury_[cluster_i], sigma_woodbury_grad, sigma_woodbury_inv_sigma_woodbury_grad, GPU_use_);
+						Log::REInfo("T1 %g", grad_cov_aux_par[first_cov_par + ind_par_[j] - 1 + ipar]);
 						grad_cov_aux_par[first_cov_par + ind_par_[j] - 1 + ipar] += 0.5 * ((sigma_woodbury_inv_sigma_woodbury_grad.trace()));
 					}
 				}//end loop over ipar
