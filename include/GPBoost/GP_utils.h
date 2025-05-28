@@ -898,9 +898,9 @@ namespace GPBoost {
 
 			// Create dense vector descriptors
 			cusparseDnVecDescr_t vecR, vecY, vecX;
-			cusparseDnVecCreate(&vecR, n, d_R_col, CUDA_R_64F);
-			cusparseDnVecCreate(&vecY, n, d_Y_col, CUDA_R_64F);
-			cusparseDnVecCreate(&vecX, n, d_Y_col, CUDA_R_64F);
+			cusparseDnVecCreate(&vecR, n, d_vecR, CUDA_R_64F);
+			cusparseDnVecCreate(&vecY, n, d_vecY, CUDA_R_64F);
+			cusparseDnVecCreate(&vecX, n, d_vecX, CUDA_R_64F);
 
 			// Solve L * Y = R (non-transpose)
 			cusparseSpSV_bufferSize(handle, CUSPARSE_OPERATION_NON_TRANSPOSE,
