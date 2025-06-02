@@ -12,10 +12,11 @@
 #include <GPBoost/type_defs.h>
 #include <GPBoost/utils.h>
 #include <LightGBM/utils/log.h>
+#include <chrono>  // only for debugging
+#include <thread> // only for debugging
 #ifdef USE_CUDA_GP
 #include <cuda_runtime.h>
 #include <cublas_v2.h>
-#include <cuda_runtime_api.h>
 #include <cusparse.h>
 #include <cusolverDn.h>
 #endif
@@ -838,120 +839,97 @@ namespace GPBoost {
 	}
 	template <class T_chol, typename std::enable_if <std::is_same<chol_sp_mat_t, T_chol>::value || std::is_same<chol_sp_mat_rm_t, T_chol>::value>::type* = nullptr >
 	bool try_solve_cholesky_gpu(const T_chol & chol, const den_mat_t & R_host, den_mat_t & X_host) {
-		using Index = int;
+		Log::REInfo("start");//only for debugging
+		std::chrono::steady_clock::time_point begin, end;//only for debugging
+		double el_time;//only for debugging
+		begin = std::chrono::steady_clock::now();//only for debugging
 
-		const sp_mat_t& L_host = chol.matrixL();
-		int n = static_cast<int>(L_host.rows());
-		int m = static_cast<int>(R_host.cols());
+		const sp_mat_t& A = chol.matrixL() * chol.matrixL().transpose();  // A = LL^T (sym. positive definite)
+		end = std::chrono::steady_clock::now();//only for debugging
+		el_time = (double)(std::chrono::duration_cast<std::chrono::microseconds>(end - begin).count()) / 1000000.;//only for debugging
+		Log::REInfo("sp_mat_t until = %g ", el_time);
+		int n = A.rows();
+		int m = R_host.cols();
 
-		if (L_host.cols() != n || R_host.rows() != n) {
-			Log::REInfo("[GPU] Dimension mismatch in try_solve_cholesky_gpu.");
+		if (R_host.rows() != n) {
+			Log::REInfo("R_host and matrix size mismatch.");
 			return false;
 		}
 
-		sp_mat_rm_t L_csr = L_host;  // row-major for CSR format
-
-		const Index* csrRowPtr = L_csr.outerIndexPtr();
-		const Index* csrColInd = L_csr.innerIndexPtr();
-		const double* csrVal = L_csr.valuePtr();
-		int nnz = static_cast<int>(L_csr.nonZeros());
-
-		// Allocate device memory for sparse matrix only once
-		int* d_csrRowPtr = nullptr, * d_csrColInd = nullptr;
-		double* d_csrVal = nullptr;
-		cudaMalloc(&d_csrRowPtr, (n + 1) * sizeof(int));
-		cudaMalloc(&d_csrColInd, nnz * sizeof(int));
-		cudaMalloc(&d_csrVal, nnz * sizeof(double));
-		cudaMemcpy(d_csrRowPtr, csrRowPtr, (n + 1) * sizeof(int), cudaMemcpyHostToDevice);
-		cudaMemcpy(d_csrColInd, csrColInd, nnz * sizeof(int), cudaMemcpyHostToDevice);
-		cudaMemcpy(d_csrVal, csrVal, nnz * sizeof(double), cudaMemcpyHostToDevice);
-
-		cusparseHandle_t handle;
-		cusparseCreate(&handle);
-
-		cusparseSpMatDescr_t matL;
-		cusparseCreateCsr(&matL, n, n, nnz,
-			d_csrRowPtr, d_csrColInd, d_csrVal,
-			CUSPARSE_INDEX_32I, CUSPARSE_INDEX_32I,
-			CUSPARSE_INDEX_BASE_ZERO, CUDA_R_64F);
-
-		cusparseSpSVDescr_t spsvDescr;
-		cusparseSpSV_createDescr(&spsvDescr);
-
-		const double alpha = 1.0;
-
-		// Allocate device vectors for RHS and intermediate solutions (size n)
-		double* d_vecR = nullptr;
-		double* d_vecY = nullptr;
-		double* d_vecX = nullptr;
-		cudaMalloc(&d_vecR, n * sizeof(double));
-		cudaMalloc(&d_vecY, n * sizeof(double));
-		cudaMalloc(&d_vecX, n * sizeof(double));
-
-		size_t bufferSize = 0;
-		void* pBuffer = nullptr;
-
+		// cuSOLVER only supports solving for one RHS at a time (no batch in sparse)
 		X_host.resize(n, m);
 
-		for (int col = 0; col < m; ++col) {
-			// Copy one column from R_host to device vector d_vecR
-			cudaMemcpy(d_vecR, R_host.col(col).data(), n * sizeof(double), cudaMemcpyHostToDevice);
+		// Extract CSR from Eigen
+		const int* csrRowPtr = A.outerIndexPtr();
+		const int* csrColInd = A.innerIndexPtr();
+		const double* csrVal = A.valuePtr();
+		int nnz = A.nonZeros();
 
-			// Create dense vector descriptors
-			cusparseDnVecDescr_t vecR, vecY, vecX;
-			cusparseDnVecCreate(&vecR, n, d_vecR, CUDA_R_64F);
-			cusparseDnVecCreate(&vecY, n, d_vecY, CUDA_R_64F);
-			cusparseDnVecCreate(&vecX, n, d_vecX, CUDA_R_64F);
+		// Allocate GPU memory for CSR matrix
+		int* d_csrRowPtr, * d_csrColInd;
+		double* d_csrVal;
+		cudaMalloc(&d_csrRowPtr, sizeof(int) * (n + 1));
+		cudaMalloc(&d_csrColInd, sizeof(int) * nnz);
+		cudaMalloc(&d_csrVal, sizeof(double) * nnz);
 
-			// Solve L * Y = R (non-transpose)
-			cusparseSpSV_bufferSize(handle, CUSPARSE_OPERATION_NON_TRANSPOSE,
-				&alpha, matL, vecR, vecY, CUDA_R_64F,
-				CUSPARSE_SPSV_ALG_DEFAULT, spsvDescr, &bufferSize);
-			cudaMalloc(&pBuffer, bufferSize);
-			cusparseSpSV_analysis(handle, CUSPARSE_OPERATION_NON_TRANSPOSE,
-				&alpha, matL, vecR, vecY, CUDA_R_64F,
-				CUSPARSE_SPSV_ALG_DEFAULT, spsvDescr, pBuffer);
-			cusparseSpSV_solve(handle, CUSPARSE_OPERATION_NON_TRANSPOSE,
-				&alpha, matL, vecR, vecY, CUDA_R_64F,
-				CUSPARSE_SPSV_ALG_DEFAULT, spsvDescr);
+		cudaMemcpy(d_csrRowPtr, csrRowPtr, sizeof(int) * (n + 1), cudaMemcpyHostToDevice);
+		cudaMemcpy(d_csrColInd, csrColInd, sizeof(int) * nnz, cudaMemcpyHostToDevice);
+		cudaMemcpy(d_csrVal, csrVal, sizeof(double) * nnz, cudaMemcpyHostToDevice);
 
-			// Solve L^T * X = Y (transpose)
-			cusparseSpSV_bufferSize(handle, CUSPARSE_OPERATION_TRANSPOSE,
-				&alpha, matL, vecY, vecX, CUDA_R_64F,
-				CUSPARSE_SPSV_ALG_DEFAULT, spsvDescr, &bufferSize);
-			cudaMemset(pBuffer, 0, bufferSize);
-			cusparseSpSV_analysis(handle, CUSPARSE_OPERATION_TRANSPOSE,
-				&alpha, matL, vecY, vecX, CUDA_R_64F,
-				CUSPARSE_SPSV_ALG_DEFAULT, spsvDescr, pBuffer);
-			cusparseSpSV_solve(handle, CUSPARSE_OPERATION_TRANSPOSE,
-				&alpha, matL, vecY, vecX, CUDA_R_64F,
-				CUSPARSE_SPSV_ALG_DEFAULT, spsvDescr);
+		// Create cuSolver handle
+		cusolverSpHandle_t cusolverH = nullptr;
+		cusolverSpCreate(&cusolverH);
 
-			// Copy solution column back to host
-			cudaMemcpy(X_host.col(col).data(), d_vecX, n * sizeof(double), cudaMemcpyDeviceToHost);
+		for (int j = 0; j < m; ++j) {
+			const double* b = R_host.col(j).data();
+			double* x = X_host.col(j).data();
 
-			// Cleanup descriptors for this iteration
-			cusparseDnVecDestroy(vecR);
-			cusparseDnVecDestroy(vecY);
-			cusparseDnVecDestroy(vecX);
-			cudaFree(pBuffer);
-			pBuffer = nullptr;
+			// Allocate memory on device for RHS
+			double* d_b, * d_x;
+			cudaMalloc(&d_b, sizeof(double) * n);
+			cudaMalloc(&d_x, sizeof(double) * n);
+
+			cudaMemcpy(d_b, b, sizeof(double) * n, cudaMemcpyHostToDevice);
+
+			int singularity = 0;
+			cusolverStatus_t status = cusolverSpDcsrlsvchol(
+				cusolverH,
+				n,
+				nnz,
+				NULL, // descrA not needed here
+				d_csrVal,
+				d_csrRowPtr,
+				d_csrColInd,
+				d_b,
+				1e-14,   // tolerance
+				0,       // reorder
+				d_x,
+				&singularity
+			);
+
+			if (status != CUSOLVER_STATUS_SUCCESS || singularity != -1) {
+				Log::REInfo("cusolverSpDcsrlsvchol failed or matrix is singular.");
+				cudaFree(d_b);
+				cudaFree(d_x);
+				cusolverSpDestroy(cusolverH);
+				cudaFree(d_csrRowPtr);
+				cudaFree(d_csrColInd);
+				cudaFree(d_csrVal);
+				return false;
+			}
+
+			cudaMemcpy(x, d_x, sizeof(double) * n, cudaMemcpyDeviceToHost);
+			cudaFree(d_b);
+			cudaFree(d_x);
 		}
 
-		// Cleanup device memory and cuSPARSE objects
+		// Clean up
+		cusolverSpDestroy(cusolverH);
 		cudaFree(d_csrRowPtr);
 		cudaFree(d_csrColInd);
 		cudaFree(d_csrVal);
-		cudaFree(d_vecR);
-		cudaFree(d_vecY);
-		cudaFree(d_vecX);
 
-		cusparseSpSV_destroyDescr(spsvDescr);
-		cusparseDestroySpMat(matL);
-		cusparseDestroy(handle);
-
-		Log::REInfo("[GPU] Sparse Cholesky solve with multiple RHS using column-wise cusparseSpSV.");
-
+		Log::REInfo("[GPU] Sparse Cholesky solve (Sigma^-1 * R) with cuSolverSp.");
 		return true;
 	}
 
