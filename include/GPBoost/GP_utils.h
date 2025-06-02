@@ -19,6 +19,7 @@
 #include <cublas_v2.h>
 #include <cusparse.h>
 #include <cusolverDn.h>
+#include <cusolverSp.h>
 #endif
 
 using LightGBM::Log;
