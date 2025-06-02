@@ -854,7 +854,9 @@ namespace GPBoost {
 		double* d_X = nullptr;
 		cudaMalloc(&d_PR, L.rows() * PR_host.cols() * sizeof(double));
 		cudaMalloc(&d_X, L.rows() * PR_host.cols() * sizeof(double));
-		cudaMemcpy(d_PR, PR_host.data(), ...);
+		cudaMemcpy(d_PR, PR_host.data(),
+			PR_host.rows() * PR_host.cols() * sizeof(double),
+			cudaMemcpyHostToDevice);
 
 		// Create cuSPARSE handles
 		cusparseHandle_t handle;
@@ -867,7 +869,7 @@ namespace GPBoost {
 		cusparseSetMatIndexBase(descrL, CUSPARSE_INDEX_BASE_ZERO);
 		cusparseSetMatFillMode(descrL, CUSPARSE_FILL_MODE_LOWER);
 		cusparseSetMatDiagType(descrL, CUSPARSE_DIAG_TYPE_NON_UNIT);
-
+		const double alpha = 1.0;
 		// Step 1: Solve L*y = PR (forward substitution)
 		cusparseDcsrsm2_solve(handle,
 			CUSPARSE_OPERATION_NON_TRANSPOSE,
@@ -893,7 +895,9 @@ namespace GPBoost {
 			d_PR, L.rows());
 
 		// Copy result back and apply inverse permutation
-		cudaMemcpy(X_host.data(), d_PR, ..., cudaMemcpyDeviceToHost);
+		cudaMemcpy(X_host.data(), d_PR,
+			X_host.rows() * X_host.cols() * sizeof(double),
+			cudaMemcpyDeviceToHost);
 		X_host = chol.permutationPinv() * X_host;
 
 		// Cleanup
