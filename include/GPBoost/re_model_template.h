@@ -1705,7 +1705,7 @@ namespace GPBoost {
 					// sigma_resid^-1 * t(cross_cov)
 					begin1 = std::chrono::steady_clock::now();//only for debugging
 					//sigma_resid_inv_cross_cov_T = chol_fact_resid_[cluster_i].solve((*cross_cov));
-					GPBoost::solve_linear_sys<T_chol>(chol_fact_resid_[cluster_i], (*cross_cov), sigma_resid_inv_cross_cov_T, GPU_use_);
+					GPBoost::solve_linear_sys<T_chol>(chol_fact_resid_[cluster_i], (*cross_cov), sigma_resid_inv_cross_cov_T, false);
 					end = std::chrono::steady_clock::now();//only for debugging
 					el_time = (double)(std::chrono::duration_cast<std::chrono::microseconds>(end - begin1).count()) / 1000000.;//only for debugging
 					Log::REInfo("resid time until = %g ", el_time);
