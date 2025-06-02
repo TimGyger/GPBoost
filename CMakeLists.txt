@@ -569,6 +569,8 @@ if(USE_CUDA_GP)
     CUDA::cusolver
   )
 
+  target_compile_definitions(_gpboost PRIVATE CUSOLVER_SPARSE_LOWER_LEVEL_PREVIEW)
+
 endif(USE_CUDA_GP)
 
 if(USE_HDFS)
