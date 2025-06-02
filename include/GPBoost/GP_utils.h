@@ -601,7 +601,7 @@ namespace GPBoost {
 	* \param[out] X = Sigma^{-1} * R
 	* \param GPU_use if false Use CPU
 	*/
-	void solve_linear_sys(const chol_den_mat_t& chol, const den_mat_t& R_host, den_mat_t& X_host, bool GPU_use);
+	//void solve_linear_sys(const chol_den_mat_t& chol, const den_mat_t& R_host, den_mat_t& X_host, bool GPU_use);
 
 #ifdef USE_CUDA_GP
 
