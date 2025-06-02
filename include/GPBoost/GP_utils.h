@@ -839,71 +839,10 @@ namespace GPBoost {
 	}
 	template <class T_chol, typename std::enable_if <std::is_same<chol_sp_mat_t, T_chol>::value || std::is_same<chol_sp_mat_rm_t, T_chol>::value>::type* = nullptr >
 	bool try_solve_cholesky_gpu(const T_chol & chol, const den_mat_t & R_host, den_mat_t & X_host) {
-		const sp_mat_t L = chol.matrixL();  // Lower triangular factor [3]
-		const Eigen::PermutationMatrix<Eigen::Dynamic>& P = chol.permutationP();
-
-		// Apply permutation to RHS
-		den_mat_t PR_host = P * R_host;
-
-		// Convert L to CSR format
-		sp_mat_t L_colMajor = L;  // Ensure column-major storage
-		L_colMajor.makeCompressed();
-
-		// GPU memory allocation
-		double* d_PR = nullptr;
-		double* d_X = nullptr;
-		cudaMalloc(&d_PR, L.rows() * PR_host.cols() * sizeof(double));
-		cudaMalloc(&d_X, L.rows() * PR_host.cols() * sizeof(double));
-		cudaMemcpy(d_PR, PR_host.data(),
-			PR_host.rows() * PR_host.cols() * sizeof(double),
-			cudaMemcpyHostToDevice);
-
-		// Create cuSPARSE handles
-		cusparseHandle_t handle;
-		cusparseCreate(&handle);
-
-		// Matrix descriptor for triangular solve
-		cusparseMatDescr_t descrL;
-		cusparseCreateMatDescr(&descrL);
-		cusparseSetMatType(descrL, CUSPARSE_MATRIX_TYPE_GENERAL);
-		cusparseSetMatIndexBase(descrL, CUSPARSE_INDEX_BASE_ZERO);
-		cusparseSetMatFillMode(descrL, CUSPARSE_FILL_MODE_LOWER);
-		cusparseSetMatDiagType(descrL, CUSPARSE_DIAG_TYPE_NON_UNIT);
-		const double alpha = 1.0;
-		// Step 1: Solve L*y = PR (forward substitution)
-		cusparseDcsrsm2_solve(handle,
-			CUSPARSE_OPERATION_NON_TRANSPOSE,
-			CUSPARSE_OPERATION_NON_TRANSPOSE,
-			L.rows(), PR_host.cols(), L.nonZeros(),
-			&alpha, descrL,
-			L_colMajor.valuePtr(),
-			L_colMajor.outerIndexPtr(),
-			L_colMajor.innerIndexPtr(),
-			d_PR, L.rows(),
-			d_X, L.rows());
-
-		// Step 2: Solve L^T*x = y (backward substitution)
-		cusparseDcsrsm2_solve(handle,
-			CUSPARSE_OPERATION_TRANSPOSE,
-			CUSPARSE_OPERATION_NON_TRANSPOSE,
-			L.rows(), PR_host.cols(), L.nonZeros(),
-			&alpha, descrL,
-			L_colMajor.valuePtr(),
-			L_colMajor.outerIndexPtr(),
-			L_colMajor.innerIndexPtr(),
-			d_X, L.rows(),
-			d_PR, L.rows());
-
-		// Copy result back and apply inverse permutation
-		cudaMemcpy(X_host.data(), d_PR,
-			X_host.rows() * X_host.cols() * sizeof(double),
-			cudaMemcpyDeviceToHost);
-		X_host = chol.permutationPinv() * X_host;
-
-		// Cleanup
-		cusparseDestroy(handle);
-		cudaFree(d_PR);
-		cudaFree(d_X);
+#pragma omp parallel for schedule(static)   
+		for (int i = 0; i < R_host.cols(); ++i) {
+			X_host.col(i) = chol.solve(R_host.col(i));
+		}
 		return true;
 	}
 
