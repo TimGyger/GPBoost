@@ -7,7 +7,6 @@
 * Licensed under the Apache License Version 2.0. See LICENSE file in the project root for license information.
 */
 #ifdef USE_CUDA_GP
-#define CUSOLVER_SPARSE_LOWER_LEVEL_PREVIEW
 #include <GPBoost/GP_utils.h>
 #include <cuda_runtime.h>
 #include <cublas_v2.h>

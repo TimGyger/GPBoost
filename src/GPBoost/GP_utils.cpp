@@ -12,7 +12,6 @@
 #include <cmath>
 
 #ifdef USE_CUDA_GP
-#define CUSOLVER_SPARSE_LOWER_LEVEL_PREVIEW
 #include <cuda_runtime.h>
 #include <cublas_v2.h>
 #include <cusparse.h>
