@@ -7868,7 +7868,7 @@ namespace GPBoost {
 					likelihood_[cluster_i]->FindModePostRandEffCalcMLLVecchia(y_[cluster_i].data(), y_int_[cluster_i].data(),
 						fixed_effects_cluster_i_ptr, B_[cluster_i], D_inv_[cluster_i],
 						first_update_, Sigma_L_k, calc_mll, mll_cluster_i, re_comps_ip_preconditioner_[cluster_i][0],
-						re_comps_cross_cov_preconditioner_[cluster_i][0], chol_ip_cross_cov_preconditioner_[cluster_i][0], chol_fact_sigma_ip_preconditioner_[cluster_i][0]);
+						re_comps_cross_cov_preconditioner_[cluster_i][0], chol_ip_cross_cov_preconditioner_[cluster_i][0], chol_fact_sigma_ip_preconditioner_[cluster_i][0], GPU_use_);
 				}
 				else if (gp_approx_ == "full_scale_vecchia") {
 					if (num_comps_total_ > 1) {
@@ -7886,7 +7886,7 @@ namespace GPBoost {
 					likelihood_[cluster_i]->FindModePostRandEffCalcMLLFITC(y_[cluster_i].data(), y_int_[cluster_i].data(),
 						fixed_effects_cluster_i_ptr, re_comps_ip_[cluster_i][0][0]->GetZSigmaZt(),
 						chol_fact_sigma_ip_[cluster_i][0], re_comps_cross_cov_[cluster_i][0][0]->GetSigmaPtr(),
-						fitc_resid_diag_[cluster_i], mll_cluster_i);
+						fitc_resid_diag_[cluster_i], mll_cluster_i, GPU_use_);
 				}
 				else if (only_grouped_REs_use_woodbury_identity_ && !only_one_grouped_RE_calculations_on_RE_scale_) {
 					likelihood_[cluster_i]->FindModePostRandEffCalcMLLGroupedRE(y_[cluster_i].data(), y_int_[cluster_i].data(),
