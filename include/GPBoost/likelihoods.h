@@ -2789,7 +2789,7 @@ namespace GPBoost {
 				mode_update_lag1 = mode_;
 				if (quasi_newton_for_mode_finding_) {
 					//TriangularSolveGivenCholesky<chol_den_mat_t, den_mat_t, den_mat_t, den_mat_t>(chol_fact_sigma_woodbury, Bt_D_inv_B_cross_cov.transpose(), woodbury_cross_cov_Bt_D_inv_B, false);
-					GPBoost::solve_lower_triangular(chol_fact_sigma_woodbury, Bt_D_inv_B_cross_cov.transpose(), woodbury_cross_cov_Bt_D_inv_B, GPU_use_);
+					GPBoost::solve_lower_triangular(chol_fact_sigma_woodbury, Bt_D_inv_B_cross_cov.transpose(), woodbury_cross_cov_Bt_D_inv_B, GPU_use);
 				}
 			}
 			// Variables when using iterative methods
