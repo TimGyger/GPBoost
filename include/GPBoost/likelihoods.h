@@ -5318,11 +5318,12 @@ namespace GPBoost {
 			const std::vector<std::shared_ptr<RECompGP<den_mat_t>>>& re_comps_ip_cluster_i,
 			const std::vector<std::shared_ptr<RECompGP<den_mat_t>>>& re_comps_cross_cov_cluster_i,
 			const den_mat_t chol_ip_cross_cov,
-			const chol_den_mat_t chol_fact_sigma_ip) {
+			const chol_den_mat_t chol_fact_sigma_ip,
+			bool GPU_use) {
 			if (calc_mode) {// Calculate mode and Cholesky factor of Sigma^-1 + W at mode
 				double mll;//approximate marginal likelihood. This is a by-product that is not used here.
 				FindModePostRandEffCalcMLLVecchia(y_data, y_data_int, fixed_effects, B, D_inv, false, Sigma_L_k_, true, mll,
-					re_comps_ip_cluster_i, re_comps_cross_cov_cluster_i, chol_ip_cross_cov, chol_fact_sigma_ip);
+					re_comps_ip_cluster_i, re_comps_cross_cov_cluster_i, chol_ip_cross_cov, chol_fact_sigma_ip,GPU_use);
 			}
 			if (na_or_inf_during_last_call_to_find_mode_) {
 				if (call_for_std_dev_coef) {
@@ -5753,7 +5754,8 @@ namespace GPBoost {
 			vec_t& fixed_effect_grad,
 			double* aux_par_grad,
 			bool calc_mode,
-			bool call_for_std_dev_coef) {
+			bool call_for_std_dev_coef,
+			bool GPU_use) {
 			int num_ip = (int)((*sigma_ip).rows());
 			CHECK((int)((*cross_cov).rows()) == dim_mode_);
 			CHECK((int)((*cross_cov).cols()) == num_ip);
@@ -5761,7 +5763,7 @@ namespace GPBoost {
 			if (calc_mode) {// Calculate mode and Cholesky factor 
 				double mll;//approximate marginal likelihood. This is a by-product that is not used here.
 				FindModePostRandEffCalcMLLFITC(y_data, y_data_int, fixed_effects, sigma_ip, chol_fact_sigma_ip,
-					cross_cov, fitc_resid_diag, mll);
+					cross_cov, fitc_resid_diag, mll, GPU_use);
 			}
 			if (na_or_inf_during_last_call_to_find_mode_) {
 				if (call_for_std_dev_coef) {
@@ -6901,12 +6903,13 @@ namespace GPBoost {
 			const std::vector<std::shared_ptr<RECompGP<den_mat_t>>>& re_comps_cross_cov_cluster_i,
 			const den_mat_t chol_ip_cross_cov,
 			const chol_den_mat_t chol_fact_sigma_ip,
-			int num_gp) {
+			int num_gp,
+			bool GPU_use) {
 			CHECK(num_gp <= num_sets_re_);
 			if (calc_mode) {// Calculate mode and Cholesky factor of Sigma^-1 + W at mode
 				double mll;//approximate marginal likelihood. This is a by-product that is not used here.
 				FindModePostRandEffCalcMLLVecchia(y_data, y_data_int, fixed_effects, B, D_inv, false, Sigma_L_k_, false, mll,
-					re_comps_ip_cluster_i, re_comps_cross_cov_cluster_i, chol_ip_cross_cov, chol_fact_sigma_ip);
+					re_comps_ip_cluster_i, re_comps_cross_cov_cluster_i, chol_ip_cross_cov, chol_fact_sigma_ip,GPU_use);
 			}
 			if (na_or_inf_during_last_call_to_find_mode_) {
 				Log::REFatal(NA_OR_INF_ERROR_);
@@ -7154,11 +7157,12 @@ namespace GPBoost {
 			vec_t& pred_var,
 			bool calc_pred_cov,
 			bool calc_pred_var,
-			bool calc_mode) {
+			bool calc_mode,
+			bool GPU_use) {
 			if (calc_mode) {// Calculate mode and Cholesky factor 
 				double mll;//approximate marginal likelihood. This is a by-product that is not used here.
 				FindModePostRandEffCalcMLLFITC(y_data, y_data_int, fixed_effects, sigma_ip, chol_fact_sigma_ip,
-					cross_cov, fitc_resid_diag, mll);
+					cross_cov, fitc_resid_diag, mll, GPU_use);
 			}
 			if (na_or_inf_during_last_call_to_find_mode_) {
 				Log::REFatal(NA_OR_INF_ERROR_);

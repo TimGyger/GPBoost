@@ -1575,14 +1575,14 @@ namespace GPBoost {
 							calc_cov_aux_par_grad, calc_beta_grad, calc_grad_aux_par,
 							grad_cov_clus_i_ptr, grad_F_cluster_i,
 							grad_aux_clus_i_ptr, false, num_comps_total_, call_for_std_dev_coef, re_comps_ip_preconditioner_[cluster_i][0],
-							re_comps_cross_cov_preconditioner_[cluster_i][0], chol_ip_cross_cov_preconditioner_[cluster_i][0], chol_fact_sigma_ip_preconditioner_[cluster_i][0]);
+							re_comps_cross_cov_preconditioner_[cluster_i][0], chol_ip_cross_cov_preconditioner_[cluster_i][0], chol_fact_sigma_ip_preconditioner_[cluster_i][0], GPU_use_);
 					}
 					else if (gp_approx_ == "fitc") {
 						likelihood_[cluster_i]->CalcGradNegMargLikelihoodLaplaceApproxFITC(y_[cluster_i].data(), y_int_[cluster_i].data(),
 							fixed_effects_cluster_i_ptr, re_comps_ip_[cluster_i][0][0]->GetZSigmaZt(), chol_fact_sigma_ip_[cluster_i][0],
 							re_comps_cross_cov_[cluster_i][0][0]->GetSigmaPtr(), fitc_resid_diag_[cluster_i], re_comps_ip_[cluster_i][0], re_comps_cross_cov_[cluster_i][0],
 							calc_cov_aux_par_grad, calc_beta_grad, calc_grad_aux_par,
-							grad_cov_clus_i_ptr, grad_F_cluster_i, grad_aux_clus_i_ptr, false, call_for_std_dev_coef);
+							grad_cov_clus_i_ptr, grad_F_cluster_i, grad_aux_clus_i_ptr, false, call_for_std_dev_coef, GPU_use_);
 					}
 					else if (gp_approx_ == "full_scale_vecchia") {
 						likelihood_[cluster_i]->CalcGradNegMargLikelihoodLaplaceApproxFSVA(y_[cluster_i].data(), y_int_[cluster_i].data(),
@@ -3566,7 +3566,7 @@ namespace GPBoost {
 											mean_pred_id[igp], cov_mat_pred_vecchia_id, var_pred_id[igp],
 											predict_cov_mat, predict_var_or_response, false, true, re_comps_ip_preconditioner_[cluster_i][0],
 											re_comps_cross_cov_preconditioner_[cluster_i][0], chol_ip_cross_cov_preconditioner_[cluster_i][0], chol_fact_sigma_ip_preconditioner_[cluster_i][0],
-											igp);
+											igp, GPU_use_);
 									}
 									else if (vecchia_pred_type_ == "latent_order_obs_first_cond_all") {
 										CalcPredVecchiaObservedFirstOrder(false, cluster_i, num_data_pred,
@@ -3579,7 +3579,7 @@ namespace GPBoost {
 											B_[cluster_i], D_inv_[cluster_i], Bpo[igp], Bp[igp], Dp[igp],
 											mean_pred_id[igp], cov_mat_pred_vecchia_id, var_pred_id[igp],
 											predict_cov_mat, predict_var_or_response, false, false, re_comps_ip_preconditioner_[cluster_i][0],
-											re_comps_cross_cov_preconditioner_[cluster_i][0], chol_ip_cross_cov_preconditioner_[cluster_i][0], chol_fact_sigma_ip_preconditioner_[cluster_i][0], igp);
+											re_comps_cross_cov_preconditioner_[cluster_i][0], chol_ip_cross_cov_preconditioner_[cluster_i][0], chol_fact_sigma_ip_preconditioner_[cluster_i][0], igp, GPU_use_);
 									}
 									else {
 										Log::REFatal("Prediction type '%s' is not supported for the Veccia approximation.", vecchia_pred_type_.c_str());
@@ -7174,13 +7174,13 @@ namespace GPBoost {
 					likelihood_[cluster_i]->CalcGradNegMargLikelihoodLaplaceApproxVecchia(y_[cluster_i].data(), y_int_[cluster_i].data(),
 						fixed_effects_cluster_i_ptr, B_[cluster_i], D_inv_[cluster_i], B_grad_[cluster_i], D_grad_[cluster_i],
 						false, true, false, nullptr, grad_F_cluster_i, nullptr, false, num_comps_total_, false, re_comps_ip_preconditioner_[cluster_i][0],
-						re_comps_cross_cov_preconditioner_[cluster_i][0], chol_ip_cross_cov_preconditioner_[cluster_i][0], chol_fact_sigma_ip_preconditioner_[cluster_i][0]);
+						re_comps_cross_cov_preconditioner_[cluster_i][0], chol_ip_cross_cov_preconditioner_[cluster_i][0], chol_fact_sigma_ip_preconditioner_[cluster_i][0], GPU_use_);
 				}
 				else if (gp_approx_ == "fitc") {
 					likelihood_[cluster_i]->CalcGradNegMargLikelihoodLaplaceApproxFITC(y_[cluster_i].data(), y_int_[cluster_i].data(),
 						fixed_effects_cluster_i_ptr, re_comps_ip_[cluster_i][0][0]->GetZSigmaZt(), chol_fact_sigma_ip_[cluster_i][0],
 						re_comps_cross_cov_[cluster_i][0][0]->GetSigmaPtr(), fitc_resid_diag_[cluster_i], re_comps_ip_[cluster_i][0], re_comps_cross_cov_[cluster_i][0],
-						false, true, false, nullptr, grad_F_cluster_i, nullptr, false, false);
+						false, true, false, nullptr, grad_F_cluster_i, nullptr, false, false, GPU_use_);
 				}
 				else if (gp_approx_ == "full_scale_vecchia") {
 					likelihood_[cluster_i]->CalcGradNegMargLikelihoodLaplaceApproxFSVA(y_[cluster_i].data(),
@@ -10569,7 +10569,8 @@ namespace GPBoost {
 					pred_var,
 					calc_pred_cov,
 					calc_pred_var,
-					false);
+					false,
+					GPU_use_);
 			}//end !gauss_likelihood_
 		}//end CalcPredFITC_FSA
 
