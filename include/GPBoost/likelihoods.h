@@ -3201,7 +3201,8 @@ namespace GPBoost {
 			const std::vector<std::shared_ptr<RECompGP<den_mat_t>>>& re_comps_ip_cluster_i,
 			const std::vector<std::shared_ptr<RECompGP<den_mat_t>>>& re_comps_cross_cov_cluster_i,
 			const den_mat_t chol_ip_cross_cov,
-			const chol_den_mat_t chol_fact_sigma_ip) {
+			const chol_den_mat_t chol_fact_sigma_ip,
+			bool GPU_use) {
 			ChecksBeforeModeFinding();
 			// Initialize variables
 			if (!mode_initialized_) {//Better (numerically more stable) to re-initialize mode to zero in every call
@@ -3571,7 +3572,8 @@ namespace GPBoost {
 			const chol_den_mat_t& chol_fact_sigma_ip,
 			const den_mat_t* cross_cov,
 			const vec_t& fitc_resid_diag,
-			double& approx_marginal_ll) {
+			double& approx_marginal_ll,
+			bool GPU_use) {
 			ChecksBeforeModeFinding();
 			int num_ip = (int)((*sigma_ip).rows());
 			CHECK((int)((*cross_cov).rows()) == dim_mode_);
