@@ -567,6 +567,7 @@ namespace GPBoost {
 	*/
 	void matmul(const den_mat_t& A, const den_mat_t& B, den_mat_t& C, bool GPU_use);
 
+	void spmatmul(const sp_mat_rm_t& A, const sp_mat_rm_t& B, sp_mat_rm_t& C, bool GPU_use);
 	/*!
 	* \brief Matrix-multiplication D * B = C
 	* \param D Diagonal Matrix as Vector
