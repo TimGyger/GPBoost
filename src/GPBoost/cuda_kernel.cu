@@ -151,43 +151,44 @@ namespace GPBoost {
         return true;
     }
 
-    bool try_spmatmul_gpu(const sp_mat_rm_t& A, const sp_mat_rm_t& B, sp_mat_rm_t& C) {
-        if (A.cols() != B.rows()) {
+    typedef Eigen::SparseMatrix<double, Eigen::RowMajor> sp_mat_rm_t;
+
+    bool try_spmatmul_gpu(const sp_mat_rm_t& A_rm, const sp_mat_rm_t& B_rm, sp_mat_rm_t& C_rm) {
+        if (A_rm.cols() != B_rm.rows()) {
             Log::REInfo("[GPU] Dimension mismatch.");
             return false;
         }
 
+        // Convert RowMajor to ColMajor for cuSPARSE
+        sp_mat_t A = A_rm;
+        sp_mat_t B = B_rm;
+
+        A.makeCompressed();
+        B.makeCompressed();
+
         int m = A.rows(), k = A.cols(), n = B.cols();
+        int nnzA = A.nonZeros(), nnzB = B.nonZeros();
 
-        // Ensure compressed format
-        sp_mat_rm_t A_csr = A;
-        sp_mat_rm_t B_csr = B;
+        // Host pointers
+        const int* h_A_row = A.outerIndexPtr();
+        const int* h_A_col = A.innerIndexPtr();
+        const double* h_A_val = A.valuePtr();
 
-        A_csr.makeCompressed();
-        B_csr.makeCompressed();
+        const int* h_B_row = B.outerIndexPtr();
+        const int* h_B_col = B.innerIndexPtr();
+        const double* h_B_val = B.valuePtr();
 
-        int nnzA = A_csr.nonZeros();
-        int nnzB = B_csr.nonZeros();
-
-        const int* h_A_row = A_csr.outerIndexPtr();
-        const int* h_A_col = A_csr.innerIndexPtr();
-        const double* h_A_val = A_csr.valuePtr();
-
-        const int* h_B_row = B_csr.outerIndexPtr();
-        const int* h_B_col = B_csr.innerIndexPtr();
-        const double* h_B_val = B_csr.valuePtr();
-
-        // Allocate device memory
+        // Device memory
         int* d_A_row, * d_A_col, * d_B_row, * d_B_col;
         double* d_A_val, * d_B_val;
 
-        cudaMalloc((void**)&d_A_row, (m + 1) * sizeof(int));
-        cudaMalloc((void**)&d_A_col, nnzA * sizeof(int));
-        cudaMalloc((void**)&d_A_val, nnzA * sizeof(double));
+        cudaMalloc(&d_A_row, (m + 1) * sizeof(int));
+        cudaMalloc(&d_A_col, nnzA * sizeof(int));
+        cudaMalloc(&d_A_val, nnzA * sizeof(double));
 
-        cudaMalloc((void**)&d_B_row, (k + 1) * sizeof(int));
-        cudaMalloc((void**)&d_B_col, nnzB * sizeof(int));
-        cudaMalloc((void**)&d_B_val, nnzB * sizeof(double));
+        cudaMalloc(&d_B_row, (k + 1) * sizeof(int));
+        cudaMalloc(&d_B_col, nnzB * sizeof(int));
+        cudaMalloc(&d_B_val, nnzB * sizeof(double));
 
         cudaMemcpy(d_A_row, h_A_row, (m + 1) * sizeof(int), cudaMemcpyHostToDevice);
         cudaMemcpy(d_A_col, h_A_col, nnzA * sizeof(int), cudaMemcpyHostToDevice);
@@ -197,7 +198,6 @@ namespace GPBoost {
         cudaMemcpy(d_B_col, h_B_col, nnzB * sizeof(int), cudaMemcpyHostToDevice);
         cudaMemcpy(d_B_val, h_B_val, nnzB * sizeof(double), cudaMemcpyHostToDevice);
 
-        // cuSPARSE setup
         cusparseHandle_t handle;
         cusparseCreate(&handle);
 
@@ -224,65 +224,74 @@ namespace GPBoost {
         size_t bufferSize = 0;
         void* dBuffer = nullptr;
 
-        // Work estimation phase
+        // Work estimation
         cusparseSpGEMM_workEstimation(handle, CUSPARSE_OPERATION_NON_TRANSPOSE,
             CUSPARSE_OPERATION_NON_TRANSPOSE,
             &alpha, matA, matB, &beta, matC,
             CUDA_R_64F, CUSPARSE_SPGEMM_DEFAULT,
             spgemmDesc, &bufferSize, nullptr);
+
         cudaMalloc(&dBuffer, bufferSize);
+
         cusparseSpGEMM_workEstimation(handle, CUSPARSE_OPERATION_NON_TRANSPOSE,
             CUSPARSE_OPERATION_NON_TRANSPOSE,
             &alpha, matA, matB, &beta, matC,
             CUDA_R_64F, CUSPARSE_SPGEMM_DEFAULT,
             spgemmDesc, &bufferSize, dBuffer);
 
-        // Compute phase
+        // Compute
         cusparseSpGEMM_compute(handle, CUSPARSE_OPERATION_NON_TRANSPOSE,
             CUSPARSE_OPERATION_NON_TRANSPOSE,
             &alpha, matA, matB, &beta, matC,
             CUDA_R_64F, CUSPARSE_SPGEMM_DEFAULT,
             spgemmDesc, &bufferSize, dBuffer);
 
-        // Get output size
+        // Get result size
         int64_t C_num_rows, C_num_cols, C_nnz;
         cusparseSpMatGetSize(matC, &C_num_rows, &C_num_cols, &C_nnz);
 
         // Allocate output
-        int* d_C_row = nullptr, * d_C_col = nullptr;
-        double* d_C_val = nullptr;
-        cudaMalloc((void**)&d_C_row, (m + 1) * sizeof(int));
-        cudaMalloc((void**)&d_C_col, C_nnz * sizeof(int));
-        cudaMalloc((void**)&d_C_val, C_nnz * sizeof(double));
+        int* d_C_row, * d_C_col;
+        double* d_C_val;
+        cudaMalloc(&d_C_row, (C_num_rows + 1) * sizeof(int));
+        cudaMalloc(&d_C_col, C_nnz * sizeof(int));
+        cudaMalloc(&d_C_val, C_nnz * sizeof(double));
 
-        // Set pointers
-        cusparseCsrSetPointers(matC, d_C_row, d_C_col, d_C_val);
+        // Recreate matC with actual pointers
+        cusparseDestroySpMat(matC);
+        cusparseCreateCsr(&matC, C_num_rows, C_num_cols, C_nnz,
+            d_C_row, d_C_col, d_C_val,
+            CUSPARSE_INDEX_32I, CUSPARSE_INDEX_32I,
+            CUSPARSE_INDEX_BASE_ZERO, CUDA_R_64F);
 
-        // Copy result
         cusparseSpGEMM_copy(handle, CUSPARSE_OPERATION_NON_TRANSPOSE,
             CUSPARSE_OPERATION_NON_TRANSPOSE,
             &alpha, matA, matB, &beta, matC,
             CUDA_R_64F, CUSPARSE_SPGEMM_DEFAULT,
             spgemmDesc);
 
-        // Copy to host
-        std::vector<int> h_C_row(m + 1);
+        // Copy result to host
+        std::vector<int> h_C_row(C_num_rows + 1);
         std::vector<int> h_C_col(C_nnz);
         std::vector<double> h_C_val(C_nnz);
 
-        cudaMemcpy(h_C_row.data(), d_C_row, (m + 1) * sizeof(int), cudaMemcpyDeviceToHost);
+        cudaMemcpy(h_C_row.data(), d_C_row, (C_num_rows + 1) * sizeof(int), cudaMemcpyDeviceToHost);
         cudaMemcpy(h_C_col.data(), d_C_col, C_nnz * sizeof(int), cudaMemcpyDeviceToHost);
         cudaMemcpy(h_C_val.data(), d_C_val, C_nnz * sizeof(double), cudaMemcpyDeviceToHost);
 
-        // Build Eigen RowMajor sparse matrix
-        C.resize(m, n);
-        C.reserve(C_nnz);
-        for (int row = 0; row < m; ++row) {
+        // Rebuild Eigen ColMajor matrix
+        sp_mat_t C_col(C_num_rows, C_num_cols);
+        C_col.reserve(C_nnz);
+
+        for (int row = 0; row < C_num_rows; ++row) {
             for (int idx = h_C_row[row]; idx < h_C_row[row + 1]; ++idx) {
-                C.insertBack(row, h_C_col[idx]) = h_C_val[idx];
+                C_col.insertBack(row, h_C_col[idx]) = h_C_val[idx];
             }
         }
-        C.makeCompressed();
+        C_col.makeCompressed();
+
+        // Convert to RowMajor output
+        C_rm = C_col;
 
         // Cleanup
         cusparseDestroySpMat(matA);
@@ -299,6 +308,7 @@ namespace GPBoost {
         Log::REInfo("[GPU] RowMajor sparse matrix multiplication completed with cuSPARSE.");
         return true;
     }
+
 
     bool try_sparse_dense_matmul_gpu(const sp_mat_rm_t& A, const den_mat_t& B, den_mat_t& C) {
         int M = A.rows(), K = A.cols(), N = B.cols();
