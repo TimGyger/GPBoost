@@ -226,7 +226,7 @@ namespace GPBoost {
 
         // SpGEMM work estimation
         double alpha = 1.0, beta = 0.0;
-        size_t bufferSize;
+        size_t bufferSize = 0;
         cusparse_stat = cusparseSpGEMM_workEstimation(handle,
             CUSPARSE_OPERATION_NON_TRANSPOSE,
             CUSPARSE_OPERATION_NON_TRANSPOSE,
