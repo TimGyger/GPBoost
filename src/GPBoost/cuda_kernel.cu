@@ -153,62 +153,57 @@ namespace GPBoost {
 
     typedef Eigen::SparseMatrix<double, Eigen::RowMajor> sp_mat_rm_t;
 
-    bool try_spmatmul_gpu(const sp_mat_rm_t& A_rm, const sp_mat_rm_t& B_rm, sp_mat_rm_t& C_rm) {
-        if (A_rm.cols() != B_rm.rows()) {
-            Log::REInfo("[GPU] Dimension mismatch.");
+    bool try_spmatmul_gpu(const sp_mat_rm_t& A, const sp_mat_rm_t& B, sp_mat_rm_t& C) {
+        if (A.cols() != B.rows()) {
             return false;
         }
 
-        // Convert RowMajor to ColMajor for cuSPARSE
-        sp_mat_t A = A_rm;
-        sp_mat_t B = B_rm;
-
-        A.makeCompressed();
-        B.makeCompressed();
-
+        // Get CSR data from Eigen matrices
         int m = A.rows(), k = A.cols(), n = B.cols();
-        int nnzA = A.nonZeros(), nnzB = B.nonZeros();
+        const int* A_rowPtr = A.outerIndexPtr();
+        const int* A_colInd = A.innerIndexPtr();
+        const double* A_values = A.valuePtr();
+        const int A_nnz = A.nonZeros();
 
-        // Host pointers
-        const int* h_A_row = A.outerIndexPtr();
-        const int* h_A_col = A.innerIndexPtr();
-        const double* h_A_val = A.valuePtr();
+        const int* B_rowPtr = B.outerIndexPtr();
+        const int* B_colInd = B.innerIndexPtr();
+        const double* B_values = B.valuePtr();
+        const int B_nnz = B.nonZeros();
 
-        const int* h_B_row = B.outerIndexPtr();
-        const int* h_B_col = B.innerIndexPtr();
-        const double* h_B_val = B.valuePtr();
+        // CUDA device allocations
+        int* d_A_rowPtr, * d_A_colInd, * d_B_rowPtr, * d_B_colInd;
+        double* d_A_values, * d_B_values;
 
-        // Device memory
-        int* d_A_row, * d_A_col, * d_B_row, * d_B_col;
-        double* d_A_val, * d_B_val;
+        cudaMalloc(&d_A_rowPtr, (m + 1) * sizeof(int));
+        cudaMalloc(&d_A_colInd, A_nnz * sizeof(int));
+        cudaMalloc(&d_A_values, A_nnz * sizeof(double));
 
-        cudaMalloc(&d_A_row, (m + 1) * sizeof(int));
-        cudaMalloc(&d_A_col, nnzA * sizeof(int));
-        cudaMalloc(&d_A_val, nnzA * sizeof(double));
+        cudaMalloc(&d_B_rowPtr, (k + 1) * sizeof(int));
+        cudaMalloc(&d_B_colInd, B_nnz * sizeof(int));
+        cudaMalloc(&d_B_values, B_nnz * sizeof(double));
 
-        cudaMalloc(&d_B_row, (k + 1) * sizeof(int));
-        cudaMalloc(&d_B_col, nnzB * sizeof(int));
-        cudaMalloc(&d_B_val, nnzB * sizeof(double));
+        // Copy data to device
+        cudaMemcpy(d_A_rowPtr, A_rowPtr, (m + 1) * sizeof(int), cudaMemcpyHostToDevice);
+        cudaMemcpy(d_A_colInd, A_colInd, A_nnz * sizeof(int), cudaMemcpyHostToDevice);
+        cudaMemcpy(d_A_values, A_values, A_nnz * sizeof(double), cudaMemcpyHostToDevice);
 
-        cudaMemcpy(d_A_row, h_A_row, (m + 1) * sizeof(int), cudaMemcpyHostToDevice);
-        cudaMemcpy(d_A_col, h_A_col, nnzA * sizeof(int), cudaMemcpyHostToDevice);
-        cudaMemcpy(d_A_val, h_A_val, nnzA * sizeof(double), cudaMemcpyHostToDevice);
+        cudaMemcpy(d_B_rowPtr, B_rowPtr, (k + 1) * sizeof(int), cudaMemcpyHostToDevice);
+        cudaMemcpy(d_B_colInd, B_colInd, B_nnz * sizeof(int), cudaMemcpyHostToDevice);
+        cudaMemcpy(d_B_values, B_values, B_nnz * sizeof(double), cudaMemcpyHostToDevice);
 
-        cudaMemcpy(d_B_row, h_B_row, (k + 1) * sizeof(int), cudaMemcpyHostToDevice);
-        cudaMemcpy(d_B_col, h_B_col, nnzB * sizeof(int), cudaMemcpyHostToDevice);
-        cudaMemcpy(d_B_val, h_B_val, nnzB * sizeof(double), cudaMemcpyHostToDevice);
-
+        // cuSPARSE setup
         cusparseHandle_t handle;
         cusparseCreate(&handle);
 
+        // Matrix descriptors
         cusparseSpMatDescr_t matA, matB, matC;
-        cusparseCreateCsr(&matA, m, k, nnzA,
-            d_A_row, d_A_col, d_A_val,
+        cusparseCreateCsr(&matA, m, k, A_nnz,
+            d_A_rowPtr, d_A_colInd, d_A_values,
             CUSPARSE_INDEX_32I, CUSPARSE_INDEX_32I,
             CUSPARSE_INDEX_BASE_ZERO, CUDA_R_64F);
 
-        cusparseCreateCsr(&matB, k, n, nnzB,
-            d_B_row, d_B_col, d_B_val,
+        cusparseCreateCsr(&matB, k, n, B_nnz,
+            d_B_rowPtr, d_B_colInd, d_B_values,
             CUSPARSE_INDEX_32I, CUSPARSE_INDEX_32I,
             CUSPARSE_INDEX_BASE_ZERO, CUDA_R_64F);
 
@@ -217,95 +212,76 @@ namespace GPBoost {
             CUSPARSE_INDEX_32I, CUSPARSE_INDEX_32I,
             CUSPARSE_INDEX_BASE_ZERO, CUDA_R_64F);
 
-        cusparseSpGEMMDescr_t spgemmDesc;
-        cusparseSpGEMM_createDescr(&spgemmDesc);
-
+        // SpGEMM computation
         double alpha = 1.0, beta = 0.0;
-        size_t bufferSize = 0;
+        size_t bufferSize;
         void* dBuffer = nullptr;
 
-        // Work estimation
-        cusparseSpGEMM_workEstimation(handle, CUSPARSE_OPERATION_NON_TRANSPOSE,
+        cusparseSpGEMM_workEstimation(handle,
+            CUSPARSE_OPERATION_NON_TRANSPOSE,
             CUSPARSE_OPERATION_NON_TRANSPOSE,
             &alpha, matA, matB, &beta, matC,
             CUDA_R_64F, CUSPARSE_SPGEMM_DEFAULT,
-            spgemmDesc, &bufferSize, nullptr);
+            &bufferSize, nullptr);
 
         cudaMalloc(&dBuffer, bufferSize);
 
-        cusparseSpGEMM_workEstimation(handle, CUSPARSE_OPERATION_NON_TRANSPOSE,
+        cusparseSpGEMM_workEstimation(handle,
+            CUSPARSE_OPERATION_NON_TRANSPOSE,
             CUSPARSE_OPERATION_NON_TRANSPOSE,
             &alpha, matA, matB, &beta, matC,
             CUDA_R_64F, CUSPARSE_SPGEMM_DEFAULT,
-            spgemmDesc, &bufferSize, dBuffer);
+            &bufferSize, dBuffer);
 
-        // Compute
-        cusparseSpGEMM_compute(handle, CUSPARSE_OPERATION_NON_TRANSPOSE,
+        cusparseSpGEMM_compute(handle,
+            CUSPARSE_OPERATION_NON_TRANSPOSE,
             CUSPARSE_OPERATION_NON_TRANSPOSE,
             &alpha, matA, matB, &beta, matC,
             CUDA_R_64F, CUSPARSE_SPGEMM_DEFAULT,
-            spgemmDesc, &bufferSize, dBuffer);
+            &bufferSize, dBuffer);
 
-        // Get result size
-        int64_t C_num_rows, C_num_cols, C_nnz;
-        cusparseSpMatGetSize(matC, &C_num_rows, &C_num_cols, &C_nnz);
+        // Get result matrix data
+        int64_t C_rows, C_cols, C_nnz;
+        cusparseSpMatGetSize(matC, &C_rows, &C_cols, &C_nnz);
 
-        // Allocate output
-        int* d_C_row, * d_C_col;
-        double* d_C_val;
-        cudaMalloc(&d_C_row, (C_num_rows + 1) * sizeof(int));
-        cudaMalloc(&d_C_col, C_nnz * sizeof(int));
-        cudaMalloc(&d_C_val, C_nnz * sizeof(double));
+        int* d_C_rowPtr, * d_C_colInd;
+        double* d_C_values;
 
-        // Recreate matC with actual pointers
-        cusparseDestroySpMat(matC);
-        cusparseCreateCsr(&matC, C_num_rows, C_num_cols, C_nnz,
-            d_C_row, d_C_col, d_C_val,
+        cusparseCsrGet(matC, &C_rows, &C_cols, &C_nnz,
+            &d_C_rowPtr, &d_C_colInd, &d_C_values,
             CUSPARSE_INDEX_32I, CUSPARSE_INDEX_32I,
             CUSPARSE_INDEX_BASE_ZERO, CUDA_R_64F);
 
-        cusparseSpGEMM_copy(handle, CUSPARSE_OPERATION_NON_TRANSPOSE,
-            CUSPARSE_OPERATION_NON_TRANSPOSE,
-            &alpha, matA, matB, &beta, matC,
-            CUDA_R_64F, CUSPARSE_SPGEMM_DEFAULT,
-            spgemmDesc);
-
         // Copy result to host
-        std::vector<int> h_C_row(C_num_rows + 1);
-        std::vector<int> h_C_col(C_nnz);
-        std::vector<double> h_C_val(C_nnz);
+        std::vector<int> h_C_rowPtr(m + 1), h_C_colInd(C_nnz);
+        std::vector<double> h_C_values(C_nnz);
 
-        cudaMemcpy(h_C_row.data(), d_C_row, (C_num_rows + 1) * sizeof(int), cudaMemcpyDeviceToHost);
-        cudaMemcpy(h_C_col.data(), d_C_col, C_nnz * sizeof(int), cudaMemcpyDeviceToHost);
-        cudaMemcpy(h_C_val.data(), d_C_val, C_nnz * sizeof(double), cudaMemcpyDeviceToHost);
+        cudaMemcpy(h_C_rowPtr.data(), d_C_rowPtr,
+            (m + 1) * sizeof(int), cudaMemcpyDeviceToHost);
+        cudaMemcpy(h_C_colInd.data(), d_C_colInd,
+            C_nnz * sizeof(int), cudaMemcpyDeviceToHost);
+        cudaMemcpy(h_C_values.data(), d_C_values,
+            C_nnz * sizeof(double), cudaMemcpyDeviceToHost);
 
-        // Rebuild Eigen ColMajor matrix
-        sp_mat_t C_col(C_num_rows, C_num_cols);
-        C_col.reserve(C_nnz);
+        // Build Eigen matrix
+        C.resize(m, n);
+        C.makeCompressed();
+        C.resizeNonZeros(C_nnz);
 
-        for (int row = 0; row < C_num_rows; ++row) {
-            for (int idx = h_C_row[row]; idx < h_C_row[row + 1]; ++idx) {
-                C_col.insertBack(row, h_C_col[idx]) = h_C_val[idx];
-            }
-        }
-        C_col.makeCompressed();
-
-        // Convert to RowMajor output
-        C_rm = C_col;
+        std::copy(h_C_rowPtr.begin(), h_C_rowPtr.end(), C.outerIndexPtr());
+        std::copy(h_C_colInd.begin(), h_C_colInd.end(), C.innerIndexPtr());
+        std::copy(h_C_values.begin(), h_C_values.end(), C.valuePtr());
 
         // Cleanup
+        cudaFree(dBuffer);
         cusparseDestroySpMat(matA);
         cusparseDestroySpMat(matB);
         cusparseDestroySpMat(matC);
-        cusparseSpGEMM_destroyDescr(spgemmDesc);
         cusparseDestroy(handle);
 
-        cudaFree(d_A_row); cudaFree(d_A_col); cudaFree(d_A_val);
-        cudaFree(d_B_row); cudaFree(d_B_col); cudaFree(d_B_val);
-        cudaFree(d_C_row); cudaFree(d_C_col); cudaFree(d_C_val);
-        cudaFree(dBuffer);
+        cudaFree(d_A_rowPtr); cudaFree(d_A_colInd); cudaFree(d_A_values);
+        cudaFree(d_B_rowPtr); cudaFree(d_B_colInd); cudaFree(d_B_values);
 
-        Log::REInfo("[GPU] RowMajor sparse matrix multiplication completed with cuSPARSE.");
         return true;
     }
 
