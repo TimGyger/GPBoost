@@ -4521,37 +4521,29 @@ namespace GPBoost {
 								//	SigmaI_deriv_rm = -B_rm_.transpose() * B_t_D_inv_rm_.transpose();//SigmaI_deriv = -SigmaI for variance parameters if there is only one GP
 								//}
 								//else {
-								begin1 = std::chrono::steady_clock::now();
 								sp_mat_rm_t B_t_D_inv_rm_t = sp_mat_rm_t(B_t_D_inv_rm_.transpose());
 								//SigmaI_deriv_rm = sp_mat_rm_t(B_grad[ipar].transpose()) * B_t_D_inv_rm_.transpose();
 								GPBoost::spmatmul(sp_mat_rm_t(B_grad[ipar].transpose()), B_t_D_inv_rm_t, SigmaI_deriv_rm, GPU_use);
-								end = std::chrono::steady_clock::now();//only for debugging
-								el_time = (double)(std::chrono::duration_cast<std::chrono::microseconds>(end - begin1).count()) / 1000000.;//only for debugging
-								Log::REInfo("SigmaI_deriv_rm1 time until = %g ", el_time);
 								Bt_Dinv_Bgrad_rm = SigmaI_deriv_rm.transpose();
 								//B_t_D_inv_D_grad_D_inv_B_rm = B_t_D_inv_rm_ * sp_mat_rm_t(D_grad[ipar]) * B_t_D_inv_rm_.transpose();
 								sp_mat_rm_t B_t_D_inv_D_grad_D_inv_B_rm_inter;
 								GPBoost::spmatmul(sp_mat_rm_t(D_grad[ipar]), B_t_D_inv_rm_t, B_t_D_inv_D_grad_D_inv_B_rm_inter, GPU_use);
-								end = std::chrono::steady_clock::now();//only for debugging
-								el_time = (double)(std::chrono::duration_cast<std::chrono::microseconds>(end - begin1).count()) / 1000000.;//only for debugging
-								Log::REInfo("SigmaI_deriv_rm2 time until = %g ", el_time);
 								GPBoost::spmatmul(B_t_D_inv_rm_, B_t_D_inv_D_grad_D_inv_B_rm_inter, B_t_D_inv_D_grad_D_inv_B_rm, GPU_use);
-								end = std::chrono::steady_clock::now();//only for debugging
-								el_time = (double)(std::chrono::duration_cast<std::chrono::microseconds>(end - begin1).count()) / 1000000.;//only for debugging
-								Log::REInfo("SigmaI_deriv_rm2.1 time until = %g ", el_time);
 								SigmaI_deriv_rm += Bt_Dinv_Bgrad_rm - B_t_D_inv_D_grad_D_inv_B_rm;
 								Bt_Dinv_Bgrad_rm.resize(0, 0);
-								end = std::chrono::steady_clock::now();//only for debugging
-								el_time = (double)(std::chrono::duration_cast<std::chrono::microseconds>(end - begin1).count()) / 1000000.;//only for debugging
-								Log::REInfo("SigmaI_deriv_rm3 time until = %g ", el_time);
 								//}
 								// Derivative of Woodbury matrix
 								den_mat_t sigma_woodbury_grad = sigma_ip_grad;
 								den_mat_t SigmaI_deriv_rm_cross_cov(dim_mode_, num_ip);
-#pragma omp parallel for schedule(static)  
-								for (int ii = 0; ii < num_ip; ii++) {
-									SigmaI_deriv_rm_cross_cov.col(ii) = SigmaI_deriv_rm * (*cross_cov).col(ii);
-								}
+								begin1 = std::chrono::steady_clock::now();//only for debugging
+//#pragma omp parallel for schedule(static)  
+//								for (int ii = 0; ii < num_ip; ii++) {
+//									SigmaI_deriv_rm_cross_cov.col(ii) = SigmaI_deriv_rm * (*cross_cov).col(ii);
+//								}
+								GPBoost::sparse_dense_matmul(SigmaI_deriv_rm, (*cross_cov), SigmaI_deriv_rm_cross_cov, GPU_use);
+								end = std::chrono::steady_clock::now();//only for debugging
+								el_time = (double)(std::chrono::duration_cast<std::chrono::microseconds>(end - begin1).count()) / 1000000.;//only for debugging
+								Log::REInfo("SigmaI_deriv_rm_cross_cov time until = %g ", el_time);
 								//sigma_woodbury_grad += (*cross_cov).transpose() * SigmaI_deriv_rm_cross_cov;
 								den_mat_t cross_cov_dot;
 								GPBoost::matmul((*cross_cov).transpose(), SigmaI_deriv_rm_cross_cov, cross_cov_dot, GPU_use);

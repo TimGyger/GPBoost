@@ -319,6 +319,7 @@ namespace GPBoost {
 
         size_t bufferSize = 0;
         void* dBuffer = nullptr;
+        cudaMalloc(&dBuffer, bufferSize);
         cusparseSpMM_bufferSize(handle,
             CUSPARSE_OPERATION_NON_TRANSPOSE,
             CUSPARSE_OPERATION_NON_TRANSPOSE,
