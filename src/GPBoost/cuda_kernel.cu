@@ -209,20 +209,20 @@ namespace GPBoost {
         // Phase 1: Work estimation
         cusparseSpGEMM_workEstimation(handle, CUSPARSE_OPERATION_NON_TRANSPOSE, CUSPARSE_OPERATION_NON_TRANSPOSE,
             &alpha, matA, matB, &beta, matC, CUDA_R_64F,
-            CUSPARSE_SPGEMM_DEFAULT, spgemmDesc, &bufferSize1, nullptr);
+            CUSPARSE_SPGEMM_DEFAULT, spgemmDescr, &bufferSize1, nullptr);
         cudaMalloc(&dBuffer1, bufferSize1);
         cusparseSpGEMM_workEstimation(handle, CUSPARSE_OPERATION_NON_TRANSPOSE, CUSPARSE_OPERATION_NON_TRANSPOSE,
             &alpha, matA, matB, &beta, matC, CUDA_R_64F,
-            CUSPARSE_SPGEMM_DEFAULT, spgemmDesc, &bufferSize1, dBuffer1);
+            CUSPARSE_SPGEMM_DEFAULT, spgemmDescr, &bufferSize1, dBuffer1);
 
         // Phase 2: Compute
         cusparseSpGEMM_compute(handle, CUSPARSE_OPERATION_NON_TRANSPOSE, CUSPARSE_OPERATION_NON_TRANSPOSE,
             &alpha, matA, matB, &beta, matC, CUDA_R_64F,
-            CUSPARSE_SPGEMM_DEFAULT, spgemmDesc, &bufferSize2, nullptr);
+            CUSPARSE_SPGEMM_DEFAULT, spgemmDescr, &bufferSize2, nullptr);
         cudaMalloc(&dBuffer2, bufferSize2);
         cusparseSpGEMM_compute(handle, CUSPARSE_OPERATION_NON_TRANSPOSE, CUSPARSE_OPERATION_NON_TRANSPOSE,
             &alpha, matA, matB, &beta, matC, CUDA_R_64F,
-            CUSPARSE_SPGEMM_DEFAULT, spgemmDesc, &bufferSize2, dBuffer2);
+            CUSPARSE_SPGEMM_DEFAULT, spgemmDescr, &bufferSize2, dBuffer2);
 
         // Phase 3: Copy to finalize matC
         int64_t C_num_rows, C_num_cols, C_nnz;
@@ -234,7 +234,7 @@ namespace GPBoost {
         cusparseCsrSetPointers(matC, d_C_rowPtr, d_C_colInd, d_C_values);
         cusparseSpGEMM_copy(handle, CUSPARSE_OPERATION_NON_TRANSPOSE, CUSPARSE_OPERATION_NON_TRANSPOSE,
             &alpha, matA, matB, &beta, matC, CUDA_R_64F,
-            CUSPARSE_SPGEMM_DEFAULT, spgemmDesc);
+            CUSPARSE_SPGEMM_DEFAULT, spgemmDescr);
 
         // Copy result to host
         std::vector<int> h_C_rowPtr(m + 1);
