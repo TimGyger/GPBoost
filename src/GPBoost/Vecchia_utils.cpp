@@ -1250,22 +1250,22 @@ namespace GPBoost {
 								vec_t sigma_ip_I_sigma_cross_covT_obs = sigma_ip_inv_cross_cov_T_cluster_i.col(i);
 #pragma omp parallel for schedule(static)
 								for (int ipar = 0; ipar < (int)num_par_comp; ++ipar) {
-									vec_t sigma_cross_cov_gradT_obs = sigma_cross_cov_gradT[ipar].col(i);
-									vec_t sigma_ip_grad_sigma_ip_inv_cross_cov_T_obs = sigma_ip_grad_sigma_ip_inv_cross_cov_T_cluster_i[ipar].col(i);
+										vec_t sigma_cross_cov_gradT_obs = sigma_cross_cov_gradT[ipar].col(i);
+										vec_t sigma_ip_grad_sigma_ip_inv_cross_cov_T_obs = sigma_ip_grad_sigma_ip_inv_cross_cov_T_cluster_i[ipar].col(i);
 #pragma omp parallel for schedule(static)
-									for (int ii = 0; ii < num_nn; ++ii) {
-										cov_grad_mats_obs_neighbors[ind_first_par + ipar].coeffRef(ii, 0) -= (sigma_cross_cov_gradT[ipar]).col(nearest_neighbors_cluster_i[i][ii]).dot(sigma_ip_I_sigma_cross_covT_obs) +
-											sigma_ip_inv_cross_cov_T_cluster_i.col(nearest_neighbors_cluster_i[i][ii]).dot(sigma_cross_cov_gradT_obs - sigma_ip_grad_sigma_ip_inv_cross_cov_T_obs);
+										for (int ii = 0; ii < num_nn; ++ii) {
+											cov_grad_mats_obs_neighbors[ind_first_par + ipar].coeffRef(ii, 0) -= (sigma_cross_cov_gradT[ipar]).col(nearest_neighbors_cluster_i[i][ii]).dot(sigma_ip_I_sigma_cross_covT_obs) +
+												sigma_ip_inv_cross_cov_T_cluster_i.col(nearest_neighbors_cluster_i[i][ii]).dot(sigma_cross_cov_gradT_obs - sigma_ip_grad_sigma_ip_inv_cross_cov_T_obs);
 #pragma omp parallel for schedule(static)
-										for (int jj = ii; jj < num_nn; ++jj) {
-											cov_grad_mats_between_neighbors[ind_first_par + ipar].coeffRef(ii, jj) -= (sigma_cross_cov_gradT[ipar]).col(nearest_neighbors_cluster_i[i][ii]).dot(sigma_ip_inv_cross_cov_T_cluster_i.col(nearest_neighbors_cluster_i[i][jj])) +
-												sigma_ip_inv_cross_cov_T_cluster_i.col(nearest_neighbors_cluster_i[i][ii]).dot((sigma_cross_cov_gradT[ipar]).col(nearest_neighbors_cluster_i[i][jj]) -
-													sigma_ip_grad_sigma_ip_inv_cross_cov_T_cluster_i[ipar].col(nearest_neighbors_cluster_i[i][jj]));
-											if (ii != jj) {
-												cov_grad_mats_between_neighbors[ind_first_par + ipar].coeffRef(jj, ii) = cov_grad_mats_between_neighbors[ind_first_par + ipar].coeffRef(ii, jj);
+											for (int jj = ii; jj < num_nn; ++jj) {
+												cov_grad_mats_between_neighbors[ind_first_par + ipar].coeffRef(ii, jj) -= (sigma_cross_cov_gradT[ipar]).col(nearest_neighbors_cluster_i[i][ii]).dot(sigma_ip_inv_cross_cov_T_cluster_i.col(nearest_neighbors_cluster_i[i][jj])) +
+													sigma_ip_inv_cross_cov_T_cluster_i.col(nearest_neighbors_cluster_i[i][ii]).dot((sigma_cross_cov_gradT[ipar]).col(nearest_neighbors_cluster_i[i][jj]) -
+														sigma_ip_grad_sigma_ip_inv_cross_cov_T_cluster_i[ipar].col(nearest_neighbors_cluster_i[i][jj]));
+												if (ii != jj) {
+													cov_grad_mats_between_neighbors[ind_first_par + ipar].coeffRef(jj, ii) = cov_grad_mats_between_neighbors[ind_first_par + ipar].coeffRef(ii, jj);
+												}
 											}
 										}
-									}
 								}
 							}
 						}

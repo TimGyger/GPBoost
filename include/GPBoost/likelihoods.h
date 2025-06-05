@@ -4567,7 +4567,6 @@ namespace GPBoost {
 								std::shared_ptr<den_mat_t>  cross_cov_preconditioner_grad = re_comps_cross_cov_preconditioner_cluster_i[j]->GetZSigmaZtGrad(ipar, true, 0.);
 								den_mat_t sigma_ip_preconditioner_grad = *(re_comps_ip_preconditioner_cluster_i[j]->GetZSigmaZtGrad(ipar, true, 0.));
 								// Variance reduction
-								vec_t D_grad_diagonal = D_grad[ipar].diagonal();
 								vec_t D_diagonal = D_inv_rm_.diagonal().cwiseInverse();
 								//den_mat_t P_grad_PI_Z = (*cross_cov_preconditioner_grad) * sigma_ip_inv_cross_cov_preconditioner_PI_Z +
 								//	sigma_ip_inv_sigma_cross_cov_preconditioner.transpose() * ((*cross_cov_preconditioner_grad).transpose() * PI_Z) -
@@ -5110,10 +5109,10 @@ namespace GPBoost {
 							den_mat_t sigma_ip_grad = *(re_comps_ip_cluster_i[j]->GetZSigmaZtGrad(ipar, true, 0.));
 							den_mat_t sigma_ip_inv_sigma_ip_grad = chol_fact_sigma_ip.solve(sigma_ip_grad);
 							// Calculate SigmaI_deriv
-							SigmaI_deriv = B_grad[ipar].transpose() * D_inv_B;
-							Bt_Dinv_Bgrad = SigmaI_deriv.transpose();
-							SigmaI_deriv += Bt_Dinv_Bgrad - D_inv_B.transpose() * D_grad[ipar] * D_inv_B;
-							Bt_Dinv_Bgrad.resize(0, 0);
+								SigmaI_deriv = B_grad[ipar].transpose() * D_inv_B;
+								Bt_Dinv_Bgrad = SigmaI_deriv.transpose();
+								SigmaI_deriv += Bt_Dinv_Bgrad - D_inv_B.transpose() * D_grad[ipar] * D_inv_B;
+								Bt_Dinv_Bgrad.resize(0, 0);
 							// Derivative of Woodbury matrix
 							den_mat_t sigma_woodbury_grad = sigma_ip_grad;
 							sp_mat_rm_t SigmaI_deriv_rm = sp_mat_rm_t(SigmaI_deriv);

@@ -152,47 +152,36 @@ namespace GPBoost {
     }
 
     bool try_spmatmul_gpu(const sp_mat_rm_t& A, const sp_mat_rm_t& B, sp_mat_rm_t& C) {
-        if (A.cols() != B.rows()) {
-            return false;
-        }
+        if (A.cols() != B.rows()) return false;
 
         cudaError_t cuda_stat;
         cusparseStatus_t cusparse_stat;
         cusparseHandle_t handle = nullptr;
         cusparseSpMatDescr_t matA = nullptr, matB = nullptr, matC = nullptr;
+        cusparseSpGEMMDescr_t spgemmDesc = nullptr;
 
         int m = A.rows(), k = A.cols(), n = B.cols();
-        const int A_nnz = A.nonZeros();
-        const int B_nnz = B.nonZeros();
+        int A_nnz = A.nonZeros(), B_nnz = B.nonZeros();
 
-        // Device pointers
         int* d_A_rowPtr = nullptr, * d_A_colInd = nullptr;
         double* d_A_values = nullptr;
         int* d_B_rowPtr = nullptr, * d_B_colInd = nullptr;
         double* d_B_values = nullptr;
-        void* dBuffer = nullptr;
+        int* d_C_rowPtr = nullptr, * d_C_colInd = nullptr;
+        double* d_C_values = nullptr;
+        void* dBuffer1 = nullptr, * dBuffer2 = nullptr;
 
         // Allocate device memory for A
-        cuda_stat = cudaMalloc((void**)&d_A_rowPtr, (m + 1) * sizeof(int));
-        if (cuda_stat != cudaSuccess) goto cleanup;
-
-        cuda_stat = cudaMalloc((void**)&d_A_colInd, A_nnz * sizeof(int));
-        if (cuda_stat != cudaSuccess) goto cleanup;
-
-        cuda_stat = cudaMalloc((void**)&d_A_values, A_nnz * sizeof(double));
-        if (cuda_stat != cudaSuccess) goto cleanup;
+        cudaMalloc(&d_A_rowPtr, (m + 1) * sizeof(int));
+        cudaMalloc(&d_A_colInd, A_nnz * sizeof(int));
+        cudaMalloc(&d_A_values, A_nnz * sizeof(double));
 
         // Allocate device memory for B
-        cuda_stat = cudaMalloc((void**)&d_B_rowPtr, (k + 1) * sizeof(int));
-        if (cuda_stat != cudaSuccess) goto cleanup;
+        cudaMalloc(&d_B_rowPtr, (k + 1) * sizeof(int));
+        cudaMalloc(&d_B_colInd, B_nnz * sizeof(int));
+        cudaMalloc(&d_B_values, B_nnz * sizeof(double));
 
-        cuda_stat = cudaMalloc((void**)&d_B_colInd, B_nnz * sizeof(int));
-        if (cuda_stat != cudaSuccess) goto cleanup;
-
-        cuda_stat = cudaMalloc((void**)&d_B_values, B_nnz * sizeof(double));
-        if (cuda_stat != cudaSuccess) goto cleanup;
-
-        // Copy data to device
+        // Copy A and B to device
         cudaMemcpy(d_A_rowPtr, A.outerIndexPtr(), (m + 1) * sizeof(int), cudaMemcpyHostToDevice);
         cudaMemcpy(d_A_colInd, A.innerIndexPtr(), A_nnz * sizeof(int), cudaMemcpyHostToDevice);
         cudaMemcpy(d_A_values, A.valuePtr(), A_nnz * sizeof(double), cudaMemcpyHostToDevice);
@@ -201,74 +190,53 @@ namespace GPBoost {
         cudaMemcpy(d_B_colInd, B.innerIndexPtr(), B_nnz * sizeof(int), cudaMemcpyHostToDevice);
         cudaMemcpy(d_B_values, B.valuePtr(), B_nnz * sizeof(double), cudaMemcpyHostToDevice);
 
-        // cuSPARSE handle
-        cusparse_stat = cusparseCreate(&handle);
-        if (cusparse_stat != CUSPARSE_STATUS_SUCCESS) goto cleanup;
+        // cuSPARSE setup
+        cusparseCreate(&handle);
+        cusparseCreateSpGEMMDescr(&spgemmDesc);
 
-        // Create cuSPARSE CSR matrices
-        cusparse_stat = cusparseCreateCsr(&matA, m, k, A_nnz,
-            d_A_rowPtr, d_A_colInd, d_A_values,
-            CUSPARSE_INDEX_32I, CUSPARSE_INDEX_32I,
-            CUSPARSE_INDEX_BASE_ZERO, CUDA_R_64F);
-        if (cusparse_stat != CUSPARSE_STATUS_SUCCESS) goto cleanup;
+        cusparseCreateCsr(&matA, m, k, A_nnz, d_A_rowPtr, d_A_colInd, d_A_values,
+            CUSPARSE_INDEX_32I, CUSPARSE_INDEX_32I, CUSPARSE_INDEX_BASE_ZERO, CUDA_R_64F);
 
-        cusparse_stat = cusparseCreateCsr(&matB, k, n, B_nnz,
-            d_B_rowPtr, d_B_colInd, d_B_values,
-            CUSPARSE_INDEX_32I, CUSPARSE_INDEX_32I,
-            CUSPARSE_INDEX_BASE_ZERO, CUDA_R_64F);
-        if (cusparse_stat != CUSPARSE_STATUS_SUCCESS) goto cleanup;
+        cusparseCreateCsr(&matB, k, n, B_nnz, d_B_rowPtr, d_B_colInd, d_B_values,
+            CUSPARSE_INDEX_32I, CUSPARSE_INDEX_32I, CUSPARSE_INDEX_BASE_ZERO, CUDA_R_64F);
 
-        cusparse_stat = cusparseCreateCsr(&matC, m, n, 0,
-            nullptr, nullptr, nullptr,
-            CUSPARSE_INDEX_32I, CUSPARSE_INDEX_32I,
-            CUSPARSE_INDEX_BASE_ZERO, CUDA_R_64F);
-        if (cusparse_stat != CUSPARSE_STATUS_SUCCESS) goto cleanup;
+        cusparseCreateCsr(&matC, m, n, 0, nullptr, nullptr, nullptr,
+            CUSPARSE_INDEX_32I, CUSPARSE_INDEX_32I, CUSPARSE_INDEX_BASE_ZERO, CUDA_R_64F);
 
-        // SpGEMM work estimation
         double alpha = 1.0, beta = 0.0;
-        size_t bufferSize = 0;
-        cusparse_stat = cusparseSpGEMM_workEstimation(handle,
-            CUSPARSE_OPERATION_NON_TRANSPOSE,
-            CUSPARSE_OPERATION_NON_TRANSPOSE,
-            &alpha, matA, matB, &beta, matC,
-            CUDA_R_64F, CUSPARSE_SPGEMM_DEFAULT,
-            &bufferSize, nullptr);
-        if (cusparse_stat != CUSPARSE_STATUS_SUCCESS) goto cleanup;
+        size_t bufferSize1 = 0, bufferSize2 = 0;
 
-        cuda_stat = cudaMalloc(&dBuffer, bufferSize);
-        if (cuda_stat != cudaSuccess) goto cleanup;
+        // Phase 1: Work estimation
+        cusparseSpGEMM_workEstimation(handle, CUSPARSE_OPERATION_NON_TRANSPOSE, CUSPARSE_OPERATION_NON_TRANSPOSE,
+            &alpha, matA, matB, &beta, matC, CUDA_R_64F,
+            CUSPARSE_SPGEMM_DEFAULT, spgemmDesc, &bufferSize1, nullptr);
+        cudaMalloc(&dBuffer1, bufferSize1);
+        cusparseSpGEMM_workEstimation(handle, CUSPARSE_OPERATION_NON_TRANSPOSE, CUSPARSE_OPERATION_NON_TRANSPOSE,
+            &alpha, matA, matB, &beta, matC, CUDA_R_64F,
+            CUSPARSE_SPGEMM_DEFAULT, spgemmDesc, &bufferSize1, dBuffer1);
 
-        cusparse_stat = cusparseSpGEMM_workEstimation(handle,
-            CUSPARSE_OPERATION_NON_TRANSPOSE,
-            CUSPARSE_OPERATION_NON_TRANSPOSE,
-            &alpha, matA, matB, &beta, matC,
-            CUDA_R_64F, CUSPARSE_SPGEMM_DEFAULT,
-            &bufferSize, dBuffer);
-        if (cusparse_stat != CUSPARSE_STATUS_SUCCESS) goto cleanup;
+        // Phase 2: Compute
+        cusparseSpGEMM_compute(handle, CUSPARSE_OPERATION_NON_TRANSPOSE, CUSPARSE_OPERATION_NON_TRANSPOSE,
+            &alpha, matA, matB, &beta, matC, CUDA_R_64F,
+            CUSPARSE_SPGEMM_DEFAULT, spgemmDesc, &bufferSize2, nullptr);
+        cudaMalloc(&dBuffer2, bufferSize2);
+        cusparseSpGEMM_compute(handle, CUSPARSE_OPERATION_NON_TRANSPOSE, CUSPARSE_OPERATION_NON_TRANSPOSE,
+            &alpha, matA, matB, &beta, matC, CUDA_R_64F,
+            CUSPARSE_SPGEMM_DEFAULT, spgemmDesc, &bufferSize2, dBuffer2);
 
-        cusparse_stat = cusparseSpGEMM_compute(handle,
-            CUSPARSE_OPERATION_NON_TRANSPOSE,
-            CUSPARSE_OPERATION_NON_TRANSPOSE,
-            &alpha, matA, matB, &beta, matC,
-            CUDA_R_64F, CUSPARSE_SPGEMM_DEFAULT,
-            &bufferSize, dBuffer);
-        if (cusparse_stat != CUSPARSE_STATUS_SUCCESS) goto cleanup;
+        // Phase 3: Copy to finalize matC
+        int64_t C_num_rows, C_num_cols, C_nnz;
+        cusparseSpMatGetSize(matC, &C_num_rows, &C_num_cols, &C_nnz);
+        cudaMalloc(&d_C_rowPtr, (m + 1) * sizeof(int));
+        cudaMalloc(&d_C_colInd, C_nnz * sizeof(int));
+        cudaMalloc(&d_C_values, C_nnz * sizeof(double));
 
-        // Get resulting matrix size
-        int64_t C_rows, C_cols, C_nnz;
-        cusparse_stat = cusparseSpMatGetSize(matC, &C_rows, &C_cols, &C_nnz);
-        if (cusparse_stat != CUSPARSE_STATUS_SUCCESS) goto cleanup;
+        cusparseCsrSetPointers(matC, d_C_rowPtr, d_C_colInd, d_C_values);
+        cusparseSpGEMM_copy(handle, CUSPARSE_OPERATION_NON_TRANSPOSE, CUSPARSE_OPERATION_NON_TRANSPOSE,
+            &alpha, matA, matB, &beta, matC, CUDA_R_64F,
+            CUSPARSE_SPGEMM_DEFAULT, spgemmDesc);
 
-        int* d_C_rowPtr = nullptr, * d_C_colInd = nullptr;
-        double* d_C_values = nullptr;
-
-        cusparse_stat = cusparseCsrGet(matC, &C_rows, &C_cols, &C_nnz,
-            &d_C_rowPtr, &d_C_colInd, &d_C_values,
-            CUSPARSE_INDEX_32I, CUSPARSE_INDEX_32I,
-            CUSPARSE_INDEX_BASE_ZERO, CUDA_R_64F);
-        if (cusparse_stat != CUSPARSE_STATUS_SUCCESS) goto cleanup;
-
-        // Copy result from device to host
+        // Copy result to host
         std::vector<int> h_C_rowPtr(m + 1);
         std::vector<int> h_C_colInd(C_nnz);
         std::vector<double> h_C_values(C_nnz);
@@ -277,38 +245,25 @@ namespace GPBoost {
         cudaMemcpy(h_C_colInd.data(), d_C_colInd, C_nnz * sizeof(int), cudaMemcpyDeviceToHost);
         cudaMemcpy(h_C_values.data(), d_C_values, C_nnz * sizeof(double), cudaMemcpyDeviceToHost);
 
-        // Build Eigen matrix
+        // Build result Eigen matrix
         C.resize(m, n);
         C.makeCompressed();
-        C.resizeNonZeros(C_nnz);
+        C.reserve(C_nnz);
         std::copy(h_C_rowPtr.begin(), h_C_rowPtr.end(), C.outerIndexPtr());
         std::copy(h_C_colInd.begin(), h_C_colInd.end(), C.innerIndexPtr());
         std::copy(h_C_values.begin(), h_C_values.end(), C.valuePtr());
 
-        // Success
-        cudaFree(dBuffer);
-        cusparseDestroySpMat(matA);
-        cusparseDestroySpMat(matB);
-        cusparseDestroySpMat(matC);
+        // Cleanup
+        cudaFree(d_A_rowPtr); cudaFree(d_A_colInd); cudaFree(d_A_values);
+        cudaFree(d_B_rowPtr); cudaFree(d_B_colInd); cudaFree(d_B_values);
+        cudaFree(d_C_rowPtr); cudaFree(d_C_colInd); cudaFree(d_C_values);
+        cudaFree(dBuffer1); cudaFree(dBuffer2);
+        cusparseDestroySpMat(matA); cusparseDestroySpMat(matB); cusparseDestroySpMat(matC);
+        cusparseDestroySpGEMMDescr(spgemmDesc);
         cusparseDestroy(handle);
 
-        cudaFree(d_A_rowPtr); cudaFree(d_A_colInd); cudaFree(d_A_values);
-        cudaFree(d_B_rowPtr); cudaFree(d_B_colInd); cudaFree(d_B_values);
         return true;
-
-    cleanup:
-        if (dBuffer) cudaFree(dBuffer);
-        if (matA) cusparseDestroySpMat(matA);
-        if (matB) cusparseDestroySpMat(matB);
-        if (matC) cusparseDestroySpMat(matC);
-        if (handle) cusparseDestroy(handle);
-
-        cudaFree(d_A_rowPtr); cudaFree(d_A_colInd); cudaFree(d_A_values);
-        cudaFree(d_B_rowPtr); cudaFree(d_B_colInd); cudaFree(d_B_values);
-        return false;
     }
-
-
 
     bool try_sparse_dense_matmul_gpu(const sp_mat_rm_t& A, const den_mat_t& B, den_mat_t& C) {
         int M = A.rows(), K = A.cols(), N = B.cols();
