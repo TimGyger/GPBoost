@@ -158,7 +158,7 @@ namespace GPBoost {
         cusparseStatus_t cusparse_stat;
         cusparseHandle_t handle = nullptr;
         cusparseSpMatDescr_t matA = nullptr, matB = nullptr, matC = nullptr;
-        cusparseSpGEMMDescr_t spgemmDesc = nullptr;
+        cusparseSpGEMMDescr_t spgemmDescr = nullptr;
 
         int m = A.rows(), k = A.cols(), n = B.cols();
         int A_nnz = A.nonZeros(), B_nnz = B.nonZeros();
