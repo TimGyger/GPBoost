@@ -192,8 +192,8 @@ namespace GPBoost {
 
         // cuSPARSE setup
         cusparseCreate(&handle);
-        cusparseCreateSpGEMMDescr(&spgemmDesc);
-
+        //cusparseCreateSpGEMMDescr(&spgemmDesc);
+        cusparseSpGEMM_createDescr(&spgemmDescr);
         cusparseCreateCsr(&matA, m, k, A_nnz, d_A_rowPtr, d_A_colInd, d_A_values,
             CUSPARSE_INDEX_32I, CUSPARSE_INDEX_32I, CUSPARSE_INDEX_BASE_ZERO, CUDA_R_64F);
 
@@ -259,7 +259,8 @@ namespace GPBoost {
         cudaFree(d_C_rowPtr); cudaFree(d_C_colInd); cudaFree(d_C_values);
         cudaFree(dBuffer1); cudaFree(dBuffer2);
         cusparseDestroySpMat(matA); cusparseDestroySpMat(matB); cusparseDestroySpMat(matC);
-        cusparseDestroySpGEMMDescr(spgemmDesc);
+        //cusparseDestroySpGEMMDescr(spgemmDesc);
+        cusparseSpGEMM_destroyDescr(spgemmDescr);
         cusparseDestroy(handle);
 
         return true;
